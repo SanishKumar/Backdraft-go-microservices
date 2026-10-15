@@ -1,48 +1,46 @@
 syntax = "proto3";
-package pb;
+package order.v1;
 
-option go_package = "./";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/SanishKumar/go-microservices/order/pb";
 
 message Order {
     message OrderProduct {
         string id = 1;
         string name = 2;
         string description = 3;
+        // Unit price captured when the order was placed, not the current catalog price.
         double price = 4;
         uint32 quantity = 5;
     }
 
     string id = 1;
-    bytes createdAt = 2;
-    string accountId = 3;
-    double totalPrice = 4;
+    google.protobuf.Timestamp created_at = 2;
+    string account_id = 3;
+    double total_price = 4;
     repeated OrderProduct products = 5;
 }
 
 message PostOrderRequest {
     message OrderProduct {
-        string productId = 2;
-        uint32 quantity = 3;
+        string product_id = 1;
+        uint32 quantity = 2;
     }
 
-    string accountId = 2;
-    repeated OrderProduct products = 4;
+    string account_id = 1;
+    repeated OrderProduct products = 2;
+    // Requests carrying a key that was already used return the original order
+    // instead of creating a second one, which makes PostOrder safe to retry.
+    string idempotency_key = 3;
 }
 
 message PostOrderResponse {
     Order order = 1;
 }
 
-message GetOrderRequest {
-    string id = 1;
-}
-
-message GetOrderResponse {
-    Order order = 1;
-}
-
 message GetOrdersForAccountRequest {
-    string accountId = 1;
+    string account_id = 1;
 }
 
 message GetOrdersForAccountResponse {
@@ -50,8 +48,6 @@ message GetOrdersForAccountResponse {
 }
 
 service OrderService {
-    rpc PostOrder (PostOrderRequest) returns (PostOrderResponse) {
-    }
-    rpc GetOrdersForAccount (GetOrdersForAccountRequest) returns (GetOrdersForAccountResponse) {
-    }
+    rpc PostOrder (PostOrderRequest) returns (PostOrderResponse);
+    rpc GetOrdersForAccount (GetOrdersForAccountRequest) returns (GetOrdersForAccountResponse);
 }

@@ -1,75 +1,87 @@
-version: "3.7"
+# The reference system on real databases, with Backdraft attached.
+# UI: http://localhost:7070   GraphQL playground: http://localhost:8000/playground
+
+x-service: &service
+  restart: on-failure
+  environment: &env
+    BACKDRAFT_URL: backdraft:7071
 
 services:
-  account:
+  backdraft:
     build:
       context: .
-      dockerfile: ./account/app.dockerfile
-    depends_on:
-      - account_db
-    environment:
-      DATABASE_URL: postgres://sanish:123456@account_db/sanish?sslmode=disable
+      dockerfile: backdraft.Dockerfile
+    command: ["--grpc", ":7071", "--http", ":7070", "--load-target", "http://graphql:8080/graphql", "--rps", "120"]
+    ports:
+      - "127.0.0.1:7070:7070"
     restart: on-failure
+
+  account:
+    <<: *service
+    build: { context: ., args: { CMD: account/cmd/account } }
+    depends_on:
+      account_db: { condition: service_healthy }
+    environment:
+      <<: *env
+      DATABASE_URL: postgres://backdraft:backdraft@account_db/accounts?sslmode=disable
 
   catalog:
-    build:
-      context: .
-      dockerfile: ./catalog/app.dockerfile
-    depends_on:
-      - catalog_db
+    <<: *service
+    build: { context: ., args: { CMD: catalog/cmd/catalog } }
+    depends_on: [catalog_db]
     environment:
+      <<: *env
       DATABASE_URL: http://catalog_db:9200
-    restart: on-failure
 
   order:
-    build:
-      context: .
-      dockerfile: ./order/app.dockerfile
+    <<: *service
+    build: { context: ., args: { CMD: order/cmd/order } }
     depends_on:
-      - order_db
+      order_db: { condition: service_healthy }
     environment:
-      DATABASE_URL: postgres://sanish:123456@order_db/sanish?sslmode=disable
+      <<: *env
+      DATABASE_URL: postgres://backdraft:backdraft@order_db/orders?sslmode=disable
       ACCOUNT_SERVICE_URL: account:8080
       CATALOG_SERVICE_URL: catalog:8080
-    restart: on-failure
 
   graphql:
-    build:
-      context: .
-      dockerfile: ./graphql/app.dockerfile
+    <<: *service
+    build: { context: ., args: { CMD: graphql/cmd/graphql } }
     ports:
-      - 8000:8080
-    depends_on:
-      - account
-      - catalog
+      - "127.0.0.1:8000:8080"
+    depends_on: [account, catalog, order]
     environment:
+      <<: *env
       ACCOUNT_SERVICE_URL: account:8080
       CATALOG_SERVICE_URL: catalog:8080
       ORDER_SERVICE_URL: order:8080
-    restart: on-failure
 
   account_db:
-    build:
-      context: ./account
-      dockerfile: ./db.dockerfile
+    build: { context: ./account, dockerfile: db.dockerfile }
     environment:
-      POSTGRES_DB: sanish
-      POSTGRES_USER: sanish
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: accounts
+      POSTGRES_USER: backdraft
+      POSTGRES_PASSWORD: backdraft
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U backdraft -d accounts"]
+      interval: 2s
+      retries: 30
+    restart: unless-stopped
+
+  order_db:
+    build: { context: ./order, dockerfile: db.dockerfile }
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: backdraft
+      POSTGRES_PASSWORD: backdraft
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U backdraft -d orders"]
+      interval: 2s
+      retries: 30
     restart: unless-stopped
 
   catalog_db:
     image: docker.elastic.co/elasticsearch/elasticsearch:6.2.4
     environment:
-      ES_JAVA_OPTS: -Xms1g -Xmx1g
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
       discovery.type: single-node
-
-  order_db:
-    build:
-      context: ./order
-      dockerfile: ./db.dockerfile
-    environment:
-      POSTGRES_DB: sanish
-      POSTGRES_USER: sanish
-      POSTGRES_PASSWORD: 123456
-    restart: unless-stopped

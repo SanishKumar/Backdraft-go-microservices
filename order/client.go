@@ -2,11 +2,10 @@ package order
 
 import (
 	"context"
-	"log"
-	"time"
 
 	"github.com/SanishKumar/go-microservices/order/pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Client struct {
@@ -14,89 +13,65 @@ type Client struct {
 	service pb.OrderServiceClient
 }
 
-func NewClient(url string) (*Client, error) {
-	conn, err := grpc.Dial(url, grpc.WithInsecure())
+func NewClient(url string, opts ...grpc.DialOption) (*Client, error) {
+	opts = append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, opts...)
+	conn, err := grpc.NewClient(url, opts...)
 	if err != nil {
 		return nil, err
 	}
-	c := pb.NewOrderServiceClient(conn)
-	return &Client{conn, c}, nil
+	return &Client{conn, pb.NewOrderServiceClient(conn)}, nil
 }
 
 func (c *Client) Close() {
 	c.conn.Close()
 }
 
-func (c *Client) PostOrder(
-	ctx context.Context,
-	accountID string,
-	products []OrderedProduct,
-) (*Order, error) {
-	protoProducts := []*pb.PostOrderRequest_OrderProduct{}
-	for _, p := range products {
-		protoProducts = append(protoProducts, &pb.PostOrderRequest_OrderProduct{
-			ProductId: p.ID,
-			Quantity:  p.Quantity,
+func fromProto(op *pb.Order) Order {
+	o := Order{
+		ID:         op.Id,
+		AccountID:  op.AccountId,
+		TotalPrice: op.TotalPrice,
+		CreatedAt:  op.CreatedAt.AsTime(),
+		Products:   make([]OrderedProduct, 0, len(op.Products)),
+	}
+	for _, p := range op.Products {
+		o.Products = append(o.Products, OrderedProduct{
+			ID:          p.Id,
+			Name:        p.Name,
+			Description: p.Description,
+			Price:       p.Price,
+			Quantity:    p.Quantity,
 		})
 	}
-	r, err := c.service.PostOrder(
-		ctx,
-		&pb.PostOrderRequest{
-			AccountId: accountID,
-			Products:  protoProducts,
-		},
-	)
+	return o
+}
+
+// PostOrder places an order. Reusing idempotencyKey for the same account
+// returns the original order instead of creating another one.
+func (c *Client) PostOrder(ctx context.Context, accountID string, lines []Line, idempotencyKey string) (*Order, error) {
+	req := &pb.PostOrderRequest{AccountId: accountID, IdempotencyKey: idempotencyKey}
+	for _, l := range lines {
+		req.Products = append(req.Products, &pb.PostOrderRequest_OrderProduct{
+			ProductId: l.ProductID,
+			Quantity:  l.Quantity,
+		})
+	}
+	r, err := c.service.PostOrder(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-
-	// Create response order
-	newOrder := r.Order
-	newOrderCreatedAt := time.Time{}
-	newOrderCreatedAt.UnmarshalBinary(newOrder.CreatedAt)
-
-	return &Order{
-		ID:         newOrder.Id,
-		CreatedAt:  newOrderCreatedAt,
-		TotalPrice: newOrder.TotalPrice,
-		AccountID:  newOrder.AccountId,
-		Products:   products,
-	}, nil
+	o := fromProto(r.Order)
+	return &o, nil
 }
 
 func (c *Client) GetOrdersForAccount(ctx context.Context, accountID string) ([]Order, error) {
-	r, err := c.service.GetOrdersForAccount(ctx, &pb.GetOrdersForAccountRequest{
-		AccountId: accountID,
-	})
+	r, err := c.service.GetOrdersForAccount(ctx, &pb.GetOrdersForAccountRequest{AccountId: accountID})
 	if err != nil {
-		log.Println(err)
 		return nil, err
 	}
-
-	// Create response orders
-	orders := []Order{}
-	for _, orderProto := range r.Orders {
-		newOrder := Order{
-			ID:         orderProto.Id,
-			TotalPrice: orderProto.TotalPrice,
-			AccountID:  orderProto.AccountId,
-		}
-		newOrder.CreatedAt = time.Time{}
-		newOrder.CreatedAt.UnmarshalBinary(orderProto.CreatedAt)
-
-		products := []OrderedProduct{}
-		for _, p := range orderProto.Products {
-			products = append(products, OrderedProduct{
-				ID:          p.Id,
-				Quantity:    p.Quantity,
-				Name:        p.Name,
-				Description: p.Description,
-				Price:       p.Price,
-			})
-		}
-		newOrder.Products = products
-
-		orders = append(orders, newOrder)
+	orders := make([]Order, 0, len(r.Orders))
+	for _, op := range r.Orders {
+		orders = append(orders, fromProto(op))
 	}
 	return orders, nil
 }

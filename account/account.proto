@@ -1,7 +1,7 @@
 syntax = "proto3";
-package pb;
+package account.v1;
 
-option go_package = "./";
+option go_package = "github.com/SanishKumar/go-microservices/account/pb";
 
 message Account {
     string id = 1;
@@ -34,10 +34,7 @@ message GetAccountsResponse {
 }
 
 service AccountService {
-    rpc PostAccount (PostAccountRequest) returns (PostAccountResponse) {
-    }
-    rpc GetAccount (GetAccountRequest) returns (GetAccountResponse) {
-    }
-    rpc GetAccounts (GetAccountsRequest) returns (GetAccountsResponse) {
-    }
+    rpc PostAccount (PostAccountRequest) returns (PostAccountResponse);
+    rpc GetAccount (GetAccountRequest) returns (GetAccountResponse);
+    rpc GetAccounts (GetAccountsRequest) returns (GetAccountsResponse);
 }

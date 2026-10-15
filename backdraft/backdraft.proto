@@ -1,0 +1,101 @@
+syntax = "proto3";
+package backdraft.v1;
+
+option go_package = "github.com/SanishKumar/go-microservices/backdraft/pb";
+
+// ControlPlane is what service agents talk to.
+service ControlPlane {
+    // Session is one long-lived stream per service instance. The agent says
+    // Hello with the policies it was built with, then streams spans and
+    // gauges; the control plane streams back configuration overrides.
+    rpc Session (stream AgentMessage) returns (stream ControlMessage);
+}
+
+message AgentMessage {
+    oneof msg {
+        Hello hello = 1;
+        SpanBatch spans = 2;
+        Gauges gauges = 3;
+    }
+}
+
+message Hello {
+    string service = 1;
+    string instance = 2;
+    // The service's compiled-in ServiceConfig as JSON. Policies travel as
+    // JSON so the agent, HTTP API and CI files share one schema.
+    bytes declared_config = 3;
+}
+
+message SpanBatch {
+    repeated Span spans = 1;
+    // Spans the agent discarded because its buffer was full. Telemetry
+    // never blocks the request path.
+    uint64 dropped = 2;
+}
+
+message Gauges {
+    int64 unix_nano = 1;
+    int32 in_flight = 2;
+    int32 queued = 3;
+    int32 workers = 4;
+}
+
+message ControlMessage {
+    // Full effective ServiceConfig as JSON.
+    bytes config = 1;
+}
+
+enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // One attempt of an outgoing call, measured by the caller.
+    CLIENT = 1;
+    // One request as handled by the callee, including time queued.
+    SERVER = 2;
+}
+
+enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OK = 1;
+    ERROR = 2;
+    // The caller's deadline fired before a response arrived.
+    TIMEOUT = 3;
+    // Rejected because the server's queue was full.
+    SHED = 4;
+    // Dropped by the server without doing work because the caller's
+    // deadline had already passed.
+    EXPIRED = 5;
+    // A retry the retry budget refused to send.
+    BUDGET = 6;
+}
+
+message Span {
+    bytes trace_id = 1;
+    bytes span_id = 2;
+    bytes parent_id = 3;
+    Kind kind = 4;
+    // Reporting service, and the other side of the call.
+    string service = 5;
+    string peer = 6;
+    string method = 7;
+    uint32 attempt = 8;
+    int64 start_unix_nano = 9;
+    int64 duration_nanos = 10;
+    // Absolute deadline in effect when the span started, 0 if none.
+    int64 deadline_unix_nano = 11;
+    // Server only: time spent waiting for a worker.
+    int64 queue_nanos = 12;
+    // Server only: time the handler held a worker minus time blocked on
+    // downstream calls. This is what the simulator replays.
+    int64 self_nanos = 13;
+    uint32 code = 14;
+    Outcome outcome = 15;
+    // Server only: finished after the caller's deadline, so the work was
+    // thrown away.
+    bool late = 16;
+    // Client only: the response was an idempotent replay of an earlier
+    // attempt that had in fact succeeded.
+    bool replayed = 17;
+    // Server only: a fault was injected into this request.
+    bool faulted = 18;
+}
