@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 
+	"github.com/SanishKumar/go-microservices/internal/money"
 	"github.com/segmentio/ksuid"
 )
 
@@ -43,13 +43,14 @@ func (s *catalogService) PostProduct(ctx context.Context, name, description stri
 	if name == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrInvalidProduct)
 	}
-	if price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-		return nil, fmt.Errorf("%w: price must be a non-negative number", ErrInvalidProduct)
+	cents, ok := money.Cents(price)
+	if !ok {
+		return nil, fmt.Errorf("%w: price must be within 0-9999999999.99", ErrInvalidProduct)
 	}
 	p := &Product{
 		Name:        name,
 		Description: description,
-		Price:       math.Round(price*100) / 100,
+		Price:       float64(cents) / 100,
 		ID:          ksuid.New().String(),
 	}
 	if err := s.repository.PutProduct(ctx, *p); err != nil {

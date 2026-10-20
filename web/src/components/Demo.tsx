@@ -3,6 +3,7 @@ import { api } from '../api'
 import { useStore } from '../store'
 import type { Mitigations } from '../types'
 import { fmtPct } from '../format'
+import { toast } from './Toast'
 
 const NONE: Mitigations = {
   retryBudgets: false,
@@ -21,11 +22,19 @@ interface Caption {
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
-    const id = window.setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
+    if (signal.aborted) {
+      reject(new DOMException('stopped', 'AbortError'))
+      return
+    }
+    const abort = () => {
       window.clearTimeout(id)
       reject(new DOMException('stopped', 'AbortError'))
-    })
+    }
+    const id = window.setTimeout(() => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', abort, { once: true })
   })
 
 /** Success ratio over the last two seconds of ticks. */
@@ -67,8 +76,8 @@ export function useDemo() {
     }
     try {
       useStore.getState().setView('live')
-      await api.reset()
-      await api.setLoad(200)
+      await api.reset(s)
+      await api.setLoad(200, s)
       const capacity = useStore.getState().state?.capacity ?? 0
       at(0.05, {
         step: '1 / 5 · Steady state',
@@ -79,7 +88,7 @@ export function useDemo() {
       if (!ready) throw new Error('The lab has not reached a healthy baseline yet. Reset it and let the backlog drain before replaying the incident.')
       await sleep(5000, s)
 
-      await api.fault('catalog', 300, 8)
+      await api.fault('catalog', 300, 8, 0, s)
       at(0.25, {
         step: '2 / 5 · The trigger',
         text: 'Catalog slows down by 300 ms for 8 seconds: a GC pause, a noisy neighbour, a slow disk. Timeouts fire, and every layer above it retries. Watch the amber.',
@@ -105,12 +114,12 @@ export function useDemo() {
 
       at(0.6, {
         step: '4 / 5 · Metastable',
-        text: 'Nothing is broken and nothing gets through. The retries the slowdown set off now keep catalog saturated by themselves: three attempts at each of three layers. Left alone, this does not heal.',
+        text: 'The injected slowdown has ended, but retries are still keeping catalog saturated. Success remains low and the backlog has not drained. Next, limit aggregate retries and watch the response.',
         live: () => `${fmtPct(successRatio())} succeed`,
       })
       await sleep(9000, s)
 
-      await api.mitigations({ ...NONE, retryBudgets: true })
+      await api.mitigations({ ...NONE, retryBudgets: true }, s)
       at(0.75, {
         step: '5 / 5 · One policy change',
         text: 'Retry budgets on: each client may retry at most 10% of its requests. Same code, same incident. Watch the attempts fall away and the backlog drain.',
@@ -138,6 +147,15 @@ export function useDemo() {
 export function DemoCaption({ caption, progress, onStop }: { caption: Caption; progress: number; onStop: () => void }) {
   const setView = useStore((s) => s.setView)
   const [, tick] = useState(0)
+  const finish = async (reset: boolean) => {
+    onStop()
+    try {
+      if (reset) await api.reset()
+      else await api.clearFault('catalog')
+    } catch (e) {
+      toast((e as Error).message, true)
+    }
+  }
   useEffect(() => {
     if (!caption.live) return
     const id = window.setInterval(() => tick((x) => x + 1), 500)
@@ -156,7 +174,7 @@ export function DemoCaption({ caption, progress, onStop }: { caption: Caption; p
       <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
         {caption.final ? (
           <>
-            <button className="btn ghost small" onClick={() => (api.reset(), onStop())}>
+            <button className="btn ghost small" onClick={() => finish(true)}>
               Reset the lab
             </button>
             <button
@@ -170,7 +188,7 @@ export function DemoCaption({ caption, progress, onStop }: { caption: Caption; p
             </button>
           </>
         ) : (
-          <button className="btn ghost small" onClick={() => (api.clearFault('catalog'), onStop())}>
+          <button className="btn ghost small" onClick={() => finish(false)}>
             Stop
           </button>
         )}

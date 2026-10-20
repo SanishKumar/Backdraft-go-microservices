@@ -116,12 +116,13 @@ type Particle struct {
 // metrics turns spans into per-tick rates. Spans are counted when they
 // arrive, which is when the work they describe finished.
 type metrics struct {
-	mu     sync.Mutex
-	cur    *bucket
-	ring   [windowBuckets]*bucket
-	next   int
-	gauges map[string]map[string]*pb.Gauges // service -> instance
-	rng    *rand.Rand
+	entryService string // real ingress when there is no built-in users/load generator
+	mu           sync.Mutex
+	cur          *bucket
+	ring         [windowBuckets]*bucket
+	next         int
+	gauges       map[string]map[string]*pb.Gauges // service -> instance
+	rng          *rand.Rand
 }
 
 func newMetrics() *metrics {
@@ -145,6 +146,15 @@ func (m *metrics) ingest(spans []*pb.Span) {
 		d := time.Duration(s.DurationNanos)
 		switch s.Kind {
 		case pb.Kind_SERVER:
+			if m.entryService != "" && s.Service == m.entryService {
+				b.entry.offered++
+				if s.Outcome == pb.Outcome_OK && !s.Late {
+					b.entry.goodput++
+				} else {
+					b.entry.failed++
+				}
+				b.entry.dur.add(d)
+			}
 			c := b.service(s.Service)
 			c.arrivals++
 			switch s.Outcome {

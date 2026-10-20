@@ -1,7 +1,9 @@
 package tower
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"github.com/SanishKumar/go-microservices/backdraft"
 	"github.com/SanishKumar/go-microservices/backdraft/analysis"
 	"github.com/SanishKumar/go-microservices/backdraft/sim"
+	"github.com/SanishKumar/go-microservices/internal/jsonutil"
 )
 
 // Handler serves the HTTP API, the live WebSocket and, if configured,
@@ -37,14 +40,20 @@ func (t *Tower) Handler() http.Handler {
 	mux.HandleFunc("GET /api/traces/{id}", t.handleTrace)
 
 	mux.HandleFunc("GET /api/model", t.handleModel)
-	mux.HandleFunc("POST /api/sim/run", t.handleSimRun)
-	mux.HandleFunc("POST /api/sim/map", t.handleSimMap)
-	mux.HandleFunc("POST /api/sim/hysteresis", t.handleSimHysteresis)
+	mux.HandleFunc("POST /api/sim/run", t.simulation(t.handleSimRun))
+	mux.HandleFunc("POST /api/sim/map", t.simulation(t.handleSimMap))
+	mux.HandleFunc("POST /api/sim/hysteresis", t.simulation(t.handleSimHysteresis))
 
 	if dir := t.opts.UIDir; dir != "" {
 		mux.Handle("/", spa(dir))
 	}
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !upgrader.CheckOrigin(r) {
+			httpError(w, http.StatusForbidden, "cross-origin requests are not allowed")
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -61,24 +70,36 @@ func httpError(w http.ResponseWriter, code int, format string, args ...any) {
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	if err := jsonutil.DecodeObject(r.Body, v); err != nil {
 		httpError(w, http.StatusBadRequest, "bad request body: %v", err)
 		return false
 	}
 	return true
 }
 
-// withFaults carries the current faults over into new configs: policy
-// changes and fault experiments are independent.
-func (t *Tower) withFaults(cfgs map[string]backdraft.ServiceConfig) map[string]backdraft.ServiceConfig {
-	cur := t.system(false)
-	out := map[string]backdraft.ServiceConfig{}
-	for name, cfg := range cfgs {
-		cfg = cfg.Clone()
-		cfg.Fault = cur.Services[name].Fault
-		out[name] = cfg
+func (t *Tower) simulation(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case t.simSlots <- struct{}{}:
+			defer func() { <-t.simSlots }()
+		default:
+			httpError(w, http.StatusTooManyRequests, "two simulations are already running; retry shortly")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		next(w, r.WithContext(ctx))
 	}
-	return out
+}
+
+func simulationError(w http.ResponseWriter, err error) {
+	code := http.StatusBadRequest
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = http.StatusGatewayTimeout
+	} else if errors.Is(err, context.Canceled) {
+		code = http.StatusRequestTimeout
+	}
+	httpError(w, code, "%v", err)
 }
 
 func (t *Tower) handleSetConfig(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +108,7 @@ func (t *Tower) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if err := t.setConfigs(t.withFaults(map[string]backdraft.ServiceConfig{name: cfg}), "Edited "+name+" policy"); err != nil {
+	if err := t.setConfigs(map[string]backdraft.ServiceConfig{name: cfg}, "Edited "+name+" policy"); err != nil {
 		httpError(w, http.StatusBadRequest, "%v", err)
 		return
 	}
@@ -110,7 +131,7 @@ func (t *Tower) handlePatch(w http.ResponseWriter, r *http.Request) {
 	if reason == "" {
 		reason = "Applied fix"
 	}
-	if err := t.setConfigs(t.withFaults(req.Patch), reason); err != nil {
+	if err := t.setConfigs(req.Patch, reason); err != nil {
 		httpError(w, http.StatusBadRequest, "%v", err)
 		return
 	}
@@ -126,7 +147,7 @@ func (t *Tower) handleMitigations(w http.ResponseWriter, r *http.Request) {
 	}
 	before := analysis.Detect(t.system(false))
 	sys := analysis.Mitigate(t.system(true), m)
-	if err := t.setConfigs(t.withFaults(sys.Services), describeMitigations(before, m)); err != nil {
+	if err := t.setConfigs(sys.Services, describeMitigations(before, m)); err != nil {
 		httpError(w, http.StatusBadRequest, "%v", err)
 		return
 	}
@@ -167,16 +188,7 @@ func describeMitigations(before, after analysis.Mitigations) string {
 }
 
 func (t *Tower) handleReset(w http.ResponseWriter, r *http.Request) {
-	t.mu.Lock()
-	for _, timer := range t.faults {
-		timer.Stop()
-	}
-	t.faults = map[string]*time.Timer{}
-	t.mu.Unlock()
-	if err := t.setConfigs(t.system(true).Services, "Reset every policy to what the services declare"); err != nil {
-		httpError(w, http.StatusInternalServerError, "%v", err)
-		return
-	}
+	t.resetPolicies()
 	writeJSON(w, t.state())
 }
 
@@ -190,8 +202,8 @@ func (t *Tower) handleFault(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.LatencyMs < 0 || req.LatencyMs > 30_000 || req.ErrorRate < 0 || req.ErrorRate > 1 || req.DurationS < 0 {
-		httpError(w, http.StatusBadRequest, "latencyMs must be 0-30000, errorRate 0-1, durationS >= 0")
+	if req.LatencyMs < 0 || req.LatencyMs > 30_000 || req.ErrorRate < 0 || req.ErrorRate > 1 || req.DurationS < 0 || req.DurationS > 86400 {
+		httpError(w, http.StatusBadRequest, "latencyMs must be 0-30000, errorRate 0-1, durationS 0-86400")
 		return
 	}
 	f := backdraft.Fault{LatencyMs: req.LatencyMs, ErrorRate: req.ErrorRate}
@@ -220,6 +232,10 @@ func (t *Tower) handleSetLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := t.load.config()
+	if err := c.Validate(); err != nil {
+		httpError(w, http.StatusBadRequest, "%v", err)
+		return
+	}
 	t.load.set(c)
 	if after := t.load.config(); math.Round(after.RPS) != math.Round(before.RPS) {
 		t.events.add("load", "", fmt.Sprintf("Load %.0f -> %.0f req/s", before.RPS, after.RPS))
@@ -291,6 +307,54 @@ func (t *Tower) variantModel(v variant) *sim.Model {
 	return m
 }
 
+func (t *Tower) variantModels(w http.ResponseWriter, variants []variant) ([]*sim.Model, bool) {
+	if len(variants) > 4 {
+		httpError(w, http.StatusBadRequest, "at most four policy variants")
+		return nil, false
+	}
+	known := t.system(false).Services
+	models := make([]*sim.Model, len(variants))
+	for i, v := range variants {
+		if v.Base != "" && v.Base != "current" && v.Base != "declared" && v.Base != "mitigated" {
+			httpError(w, http.StatusBadRequest, "unknown policy base %q", v.Base)
+			return nil, false
+		}
+		for name, cfg := range v.Patch {
+			if _, ok := known[name]; !ok {
+				httpError(w, http.StatusBadRequest, "unknown service %q", name)
+				return nil, false
+			}
+			if err := cfg.Validate(); err != nil {
+				httpError(w, http.StatusBadRequest, "invalid %s policy: %v", name, err)
+				return nil, false
+			}
+			for peer := range cfg.Clients {
+				if _, ok := known[peer]; !ok {
+					httpError(w, http.StatusBadRequest, "unknown dependency %q", peer)
+					return nil, false
+				}
+			}
+		}
+		m := t.variantModel(v)
+		if err := m.Validate(); err != nil {
+			httpError(w, http.StatusConflict, "model not ready: %v", err)
+			return nil, false
+		}
+		models[i] = m
+	}
+	return models, true
+}
+
+func (t *Tower) validFaultService(w http.ResponseWriter, service string) bool {
+	if service != "" {
+		if _, ok := t.system(false).Services[service]; !ok {
+			httpError(w, http.StatusBadRequest, "unknown fault service %q", service)
+			return false
+		}
+	}
+	return true
+}
+
 func (t *Tower) defaultLoad() float64 {
 	if t.load != nil {
 		if rps := t.load.config().RPS; rps > 0 {
@@ -321,6 +385,13 @@ func (t *Tower) handleSimRun(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if req.RPS < 0 || req.WarmS < 0 || req.FaultS < 0 || req.ObserveS < 0 || req.LatencyMs < 0 || req.LatencyMs > 30_000 || req.ErrorRate < 0 || req.ErrorRate > 1 {
+		httpError(w, http.StatusBadRequest, "rates and durations must be non-negative, latencyMs 0-30000, errorRate 0-1")
+		return
+	}
+	if !t.validFaultService(w, req.Service) {
+		return
+	}
 	if req.RPS <= 0 {
 		req.RPS = t.defaultLoad()
 	}
@@ -337,6 +408,10 @@ func (t *Tower) handleSimRun(w http.ResponseWriter, r *http.Request) {
 	if len(req.Variants) == 0 {
 		req.Variants = []variant{{Name: "Current policy"}, {Name: "With all mitigations", Base: "mitigated"}}
 	}
+	models, ok := t.variantModels(w, req.Variants)
+	if !ok {
+		return
+	}
 	sc := sim.Brownout(req.RPS, req.Service, req.LatencyMs, req.WarmS, req.FaultS, req.ObserveS, req.Seed)
 	sc.Faults[0].ErrorRate = req.ErrorRate
 	sc.StepS = 0.5
@@ -344,22 +419,14 @@ func (t *Tower) handleSimRun(w http.ResponseWriter, r *http.Request) {
 		sc.Faults = nil
 	}
 	out := make([]variantResult, len(req.Variants))
-	done := make(chan struct{}, len(req.Variants))
 	for i, v := range req.Variants {
-		go func(i int, v variant) {
-			defer func() { done <- struct{}{} }()
-			m := t.variantModel(v)
-			if err := m.Validate(); err != nil {
-				out[i] = variantResult{Name: v.Name}
-				return
-			}
-			start := time.Now()
-			res := sim.Run(m, sc)
-			out[i] = variantResult{Name: v.Name, Result: res, WallMs: time.Since(start).Milliseconds()}
-		}(i, v)
-	}
-	for range req.Variants {
-		<-done
+		start := time.Now()
+		res, err := sim.RunContext(r.Context(), models[i], sc)
+		if err != nil {
+			simulationError(w, err)
+			return
+		}
+		out[i] = variantResult{Name: v.Name, Result: res, WallMs: time.Since(start).Milliseconds()}
 	}
 	writeJSON(w, map[string]any{"scenario": sc, "variants": out})
 }
@@ -372,11 +439,21 @@ func (t *Tower) handleSimMap(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	m := t.variantModel(req.Variant)
-	if err := m.Validate(); err != nil {
-		httpError(w, http.StatusConflict, "model not ready: %v", err)
+	if req.WarmS < 0 || req.ObserveS < 0 || req.LatencyMs < 0 || req.LatencyMs > 30_000 {
+		httpError(w, http.StatusBadRequest, "durations must be non-negative and latencyMs 0-30000")
 		return
 	}
+	if req.WarmS == 0 {
+		req.WarmS = 6
+	}
+	if req.ObserveS == 0 {
+		req.ObserveS = 25
+	}
+	models, ok := t.variantModels(w, []variant{req.Variant})
+	if !ok {
+		return
+	}
+	m := models[0]
 	capacity, bottleneck := capacityOf(m)
 	if len(req.Loads) == 0 {
 		// From light load to half of capacity: well inside the range any
@@ -398,8 +475,27 @@ func (t *Tower) handleSimMap(w http.ResponseWriter, r *http.Request) {
 	if req.Service == "" {
 		req.Service = bottleneck
 	}
+	if !t.validFaultService(w, req.Service) {
+		return
+	}
+	for _, load := range req.Loads {
+		if load < 0 || load > 20_000 {
+			httpError(w, http.StatusBadRequest, "map load must be within 0-20000 req/s")
+			return
+		}
+	}
+	for _, duration := range req.Durations {
+		if duration < 0 || req.WarmS+duration+req.ObserveS > 600 {
+			httpError(w, http.StatusBadRequest, "each map scenario must be within 600 simulated seconds with non-negative durations")
+			return
+		}
+	}
 	start := time.Now()
-	cells := sim.StabilityMap(m, req.MapSpec)
+	cells, err := sim.StabilityMapContext(r.Context(), m, req.MapSpec)
+	if err != nil {
+		simulationError(w, err)
+		return
+	}
 	writeJSON(w, map[string]any{
 		"cells": cells, "loads": req.Loads, "durations": req.Durations,
 		"service": req.Service, "latencyMs": req.LatencyMs,
@@ -416,15 +512,18 @@ func (t *Tower) handleSimHysteresis(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if req.Lo < 0 || req.Hi < 0 || req.PeriodS < 0 {
+		httpError(w, http.StatusBadRequest, "load and period must be non-negative")
+		return
+	}
 	if len(req.Variants) == 0 {
 		req.Variants = []variant{{Name: "Current policy"}, {Name: "With all mitigations", Base: "mitigated"}}
 	}
-	base := t.variantModel(req.Variants[0])
-	if err := base.Validate(); err != nil {
-		httpError(w, http.StatusConflict, "model not ready: %v", err)
+	models, ok := t.variantModels(w, req.Variants)
+	if !ok {
 		return
 	}
-	capacity, _ := capacityOf(base)
+	capacity, _ := capacityOf(models[0])
 	if req.Hi <= 0 {
 		req.Hi = math.Round(1.2 * capacity)
 	}
@@ -434,22 +533,19 @@ func (t *Tower) handleSimHysteresis(w http.ResponseWriter, r *http.Request) {
 	if req.PeriodS <= 0 {
 		req.PeriodS = 160
 	}
-	if req.PeriodS > 600 || req.Hi > 20_000 {
+	if req.PeriodS > 600 || req.Hi > 20_000 || req.Lo > req.Hi {
 		httpError(w, http.StatusBadRequest, "at most 600 simulated seconds and 20000 req/s")
 		return
 	}
 	out := make([]variantResult, len(req.Variants))
-	done := make(chan struct{}, len(req.Variants))
 	for i, v := range req.Variants {
-		go func(i int, v variant) {
-			defer func() { done <- struct{}{} }()
-			start := time.Now()
-			res := sim.Hysteresis(t.variantModel(v), req.Lo, req.Hi, req.PeriodS, req.Seed)
-			out[i] = variantResult{Name: v.Name, Result: res, WallMs: time.Since(start).Milliseconds()}
-		}(i, v)
-	}
-	for range req.Variants {
-		<-done
+		start := time.Now()
+		res, err := sim.HysteresisContext(r.Context(), models[i], req.Lo, req.Hi, req.PeriodS, req.Seed)
+		if err != nil {
+			simulationError(w, err)
+			return
+		}
+		out[i] = variantResult{Name: v.Name, Result: res, WallMs: time.Since(start).Milliseconds()}
 	}
 	writeJSON(w, map[string]any{"lo": req.Lo, "hi": req.Hi, "periodS": req.PeriodS, "capacity": capacity, "variants": out})
 }

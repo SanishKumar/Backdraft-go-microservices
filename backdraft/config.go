@@ -249,26 +249,59 @@ func ParseCode(name string) (codes.Code, bool) {
 
 // Validate reports policy values that cannot be enforced.
 func (c ServiceConfig) Validate() error {
-	if c.Server.Workers < 0 || c.Server.QueueLimit < 0 {
-		return fmt.Errorf("workers and queueLimit must be >= 0")
+	const maxDurationMs = int64(math.MaxInt64) / int64(time.Millisecond)
+	if c.Server.Workers < 0 || c.Server.QueueLimit < 0 || int64(c.Server.Workers) > math.MaxInt32 || int64(c.Server.QueueLimit) > math.MaxInt32 {
+		return fmt.Errorf("workers and queueLimit must be within [0, %d]", int64(math.MaxInt32))
 	}
-	if c.Fault.ErrorRate < 0 || c.Fault.ErrorRate > 1 {
+	if !finite(c.Server.WorkMs) || c.Server.WorkMs < 0 || c.Server.WorkMs > float64(maxDurationMs) || c.Server.RequestTimeoutMs < 0 || int64(c.Server.RequestTimeoutMs) > maxDurationMs {
+		return fmt.Errorf("server durations must be finite, non-negative and fit in time.Duration")
+	}
+	if c.Fault.LatencyMs < 0 || int64(c.Fault.LatencyMs) > maxDurationMs {
+		return fmt.Errorf("fault latency must be non-negative and fit in time.Duration")
+	}
+	if !finite(c.Fault.ErrorRate) || c.Fault.ErrorRate < 0 || c.Fault.ErrorRate > 1 {
 		return fmt.Errorf("fault errorRate must be within [0, 1]")
 	}
 	for peer, p := range c.Clients {
-		if p.TimeoutMs < 0 || p.BackoffMs < 0 || p.BackoffMaxMs < 0 {
-			return fmt.Errorf("client %s: durations must be >= 0", peer)
+		if peer == "" {
+			return fmt.Errorf("client service name must not be empty")
 		}
-		if p.MaxAttempts > 10 {
-			return fmt.Errorf("client %s: maxAttempts above 10 is never what you want", peer)
+		if p.TimeoutMs < 0 || p.BackoffMs < 0 || p.BackoffMaxMs < 0 || int64(p.TimeoutMs) > maxDurationMs || int64(p.BackoffMs) > maxDurationMs || int64(p.BackoffMaxMs) > maxDurationMs {
+			return fmt.Errorf("client %s: durations must be non-negative and fit in time.Duration", peer)
+		}
+		if p.MaxAttempts < 0 || p.MaxAttempts > 10 {
+			return fmt.Errorf("client %s: maxAttempts must be within [0, 10]", peer)
 		}
 		for _, name := range p.RetryOn {
 			if _, ok := ParseCode(name); !ok {
 				return fmt.Errorf("client %s: unknown status code %q", peer, name)
 			}
 		}
-		if b := p.Budget; b != nil && (b.Ratio < 0 || b.MinPerSec < 0) {
-			return fmt.Errorf("client %s: budget values must be >= 0", peer)
+		if b := p.Budget; b != nil && (!finite(b.Ratio) || !finite(b.MinPerSec) || b.Ratio < 0 || b.MinPerSec < 0) {
+			return fmt.Errorf("client %s: budget values must be finite and >= 0", peer)
+		}
+	}
+	return nil
+}
+
+func finite(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) }
+
+// Validate checks service policies and all references in the dependency graph.
+func (s SystemConfig) Validate() error {
+	if _, ok := s.Services[s.Entry]; s.Entry == "" || !ok {
+		return fmt.Errorf("entry %q is not one of the services", s.Entry)
+	}
+	for name, cfg := range s.Services {
+		if name == "" {
+			return fmt.Errorf("service name must not be empty")
+		}
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("service %s: %w", name, err)
+		}
+		for peer := range cfg.Clients {
+			if _, ok := s.Services[peer]; !ok {
+				return fmt.Errorf("service %s calls unknown service %q", name, peer)
+			}
 		}
 	}
 	return nil

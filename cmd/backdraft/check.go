@@ -10,6 +10,7 @@ import (
 
 	"github.com/SanishKumar/go-microservices/backdraft"
 	"github.com/SanishKumar/go-microservices/backdraft/analysis"
+	"github.com/SanishKumar/go-microservices/internal/jsonutil"
 )
 
 const checkUsage = `usage: backdraft check [flags] policy.json
@@ -36,6 +37,15 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 2
 	}
+	threshold, ok := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "none": -1}[*failOn]
+	if !ok {
+		fmt.Fprintf(stderr, "unknown --fail-on %q\n", *failOn)
+		return 2
+	}
+	if *format != "text" && *format != "json" {
+		fmt.Fprintf(stderr, "unknown --format %q\n", *format)
+		return 2
+	}
 
 	raw, err := os.ReadFile(fs.Arg(0))
 	if err != nil {
@@ -43,21 +53,13 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	var sys backdraft.SystemConfig
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&sys); err != nil {
+	if err := jsonutil.DecodeObject(strings.NewReader(string(raw)), &sys); err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", fs.Arg(0), err)
 		return 2
 	}
-	if _, ok := sys.Services[sys.Entry]; !ok {
-		fmt.Fprintf(stderr, "%s: entry %q is not one of the services\n", fs.Arg(0), sys.Entry)
+	if err := sys.Validate(); err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", fs.Arg(0), err)
 		return 2
-	}
-	for name, cfg := range sys.Services {
-		if err := cfg.Validate(); err != nil {
-			fmt.Fprintf(stderr, "%s: service %s: %v\n", fs.Arg(0), name, err)
-			return 2
-		}
 	}
 
 	report := analysis.Analyze(analysis.Input{System: sys})
@@ -69,11 +71,6 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		printReport(stdout, report)
 	}
 
-	threshold, ok := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "none": -1}[*failOn]
-	if !ok {
-		fmt.Fprintf(stderr, "unknown --fail-on %q\n", *failOn)
-		return 2
-	}
 	rank := map[analysis.Severity]int{analysis.Critical: 0, analysis.High: 1, analysis.Medium: 2, analysis.Low: 3}
 	for _, f := range report.Findings {
 		if rank[f.Severity] <= threshold {

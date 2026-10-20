@@ -49,14 +49,15 @@ type pending struct {
 // excludes downstream calls), which downstream calls each method makes and
 // in what order, and the mix of requests users send.
 type calibrator struct {
-	mu      sync.Mutex
-	rng     *rand.Rand
-	entry   string
-	self    map[string]*reservoir[float64]
-	shapes  map[string]map[string]*reservoir[sim.Shape]
-	pending map[[8]byte]*pending
-	ops     map[string]map[string]float64 // op -> target service -> count
-	methods map[analysis.Edge]map[string]bool
+	mu          sync.Mutex
+	rng         *rand.Rand
+	entry       string
+	serverEntry bool
+	self        map[string]*reservoir[float64]
+	shapes      map[string]map[string]*reservoir[sim.Shape]
+	pending     map[[8]byte]*pending
+	ops         map[string]map[string]float64 // op -> target service -> count
+	methods     map[analysis.Edge]map[string]bool
 }
 
 func newCalibrator(entry string) *calibrator {
@@ -92,7 +93,7 @@ func (c *calibrator) ingest(spans []*pb.Span) {
 			if s.Attempt != 1 {
 				continue
 			}
-			if s.Service == c.entry {
+			if s.Service == c.entry && !c.serverEntry {
 				if c.ops[s.Method] == nil {
 					c.ops[s.Method] = map[string]float64{}
 				}
@@ -111,6 +112,12 @@ func (c *calibrator) ingest(spans []*pb.Span) {
 			}
 			p.children = append(p.children, child{s.Peer, s.Method, s.StartUnixNano, s.StartUnixNano + s.DurationNanos})
 		case pb.Kind_SERVER:
+			if c.serverEntry && s.Service == c.entry {
+				if c.ops[s.Method] == nil {
+					c.ops[s.Method] = map[string]float64{}
+				}
+				c.ops[s.Method][s.Service]++
+			}
 			var sid [8]byte
 			copy(sid[:], s.SpanId)
 			p := c.pending[sid]
@@ -195,10 +202,16 @@ func (c *calibrator) model(sys backdraft.SystemConfig, fallback *sim.Model) (*si
 			cal.SelfSamples[name] = len(r.items)
 		}
 		if methods := c.shapes[name]; len(methods) > 0 {
-			sm.Shapes = map[string][]sim.Shape{}
+			shapes := map[string][]sim.Shape{}
+			for method, samples := range sm.Shapes {
+				shapes[method] = samples
+			}
+			sm.Shapes = shapes
 			for method, r := range methods {
-				sm.Shapes[method] = append([]sim.Shape(nil), r.items...)
-				cal.ShapeSamples[name] += len(r.items)
+				if len(r.items) >= minSamples {
+					sm.Shapes[method] = append([]sim.Shape(nil), r.items...)
+					cal.ShapeSamples[name] += len(r.items)
+				}
 			}
 		}
 		m.Services[name] = sm

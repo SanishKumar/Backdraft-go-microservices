@@ -74,7 +74,7 @@ function useStatus(): Status | null {
         text:
           `The slowdown ended ${Math.round(sinceClear)}s ago and only ${fmtPct(ratio)} of requests succeed. ` +
           (worst
-            ? `${worst} is ${busy ? `${busy} busy and ` : ''}${fmtPct(worstWaste)} of its work finishes after the caller gave up. Retries are sustaining the overload; it will not clear on its own.`
+            ? `${worst} is ${busy ? `${busy} busy and ` : ''}${fmtPct(worstWaste)} of its work finishes after the caller gave up. The current traffic and backlog are consistent with retry-sustained overload.`
             : 'Retries are sustaining the overload.'),
       }
     }

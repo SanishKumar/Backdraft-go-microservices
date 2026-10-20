@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react'
+import { Component, lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { connect, useStore } from './store'
 import { TopBar } from './components/TopBar'
 import { Controls } from './components/Controls'
@@ -13,14 +13,24 @@ import { PolicyView } from './views/Policy'
 
 const Scene = lazy(() => import('./scene/Scene').then((m) => ({ default: m.Scene })))
 
+class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  render() {
+    return this.state.failed
+      ? <div className="empty">The 3D view could not load. Metrics, traces, and policy controls remain available.</div>
+      : this.props.children
+  }
+}
+
 function LiveView() {
   const demo = useDemo()
   return (
     <div className="view live-view">
       <div className="stage" id="stage">
-        <Suspense fallback={<div className="empty">Loading the scene…</div>}>
+        <SceneBoundary><Suspense fallback={<div className="empty">Loading the scene…</div>}>
           <Scene />
-        </Suspense>
+        </Suspense></SceneBoundary>
       </div>
       <Controls onPlay={demo.play} />
       <FindingsRail />

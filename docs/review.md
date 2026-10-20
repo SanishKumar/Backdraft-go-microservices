@@ -2,13 +2,9 @@
 
 This is a review of the repository as it stood at commit `199b246`
 (Account, Catalog and Order gRPC services behind a gqlgen gateway), before
-Backdraft was built on top of it. Every item below is fixed in the current
-tree; the ones that change behaviour have regression tests.
-
-The code was a solid starting point: clean package boundaries, a repository
-interface per service, and vendored dependencies. The problems cluster in
-three places: what happens to data across service boundaries, what errors
-mean to callers, and what happens when a dependency is slow.
+Backdraft was built on top of it. The sections below record the current
+behavior and the reasons for the changes. Existing database installations
+need a schema migration before adopting the new order representation.
 
 ## Correctness
 

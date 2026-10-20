@@ -46,17 +46,18 @@ type Options struct {
 type Tower struct {
 	pb.UnimplementedControlPlaneServer
 
-	opts    Options
-	metrics *metrics
-	traces  *traceStore
-	calib   *calibrator
-	events  *eventLog
-	hub     *hub
-	load    *loadGen
+	opts     Options
+	metrics  *metrics
+	traces   *traceStore
+	calib    *calibrator
+	events   *eventLog
+	hub      *hub
+	load     *loadGen
+	simSlots chan struct{}
 
 	mu       sync.Mutex
 	services map[string]*serviceState
-	faults   map[string]*time.Timer
+	faults   map[string]*faultTimer
 
 	findingsMu  sync.Mutex
 	findings    analysis.Report
@@ -72,6 +73,8 @@ type serviceState struct {
 	sessions  map[*session]struct{}
 	seen      bool
 }
+
+type faultTimer struct{ timer *time.Timer }
 
 type session struct {
 	instance string
@@ -102,8 +105,13 @@ func New(opts Options) *Tower {
 		calib:    newCalibrator(opts.Entry),
 		events:   newEventLog(),
 		hub:      newHub(),
+		simSlots: make(chan struct{}, 2),
 		services: map[string]*serviceState{},
-		faults:   map[string]*time.Timer{},
+		faults:   map[string]*faultTimer{},
+	}
+	if opts.Fallback == nil && opts.LoadTarget == "" {
+		t.calib.serverEntry = true
+		t.metrics.entryService = opts.Entry
 	}
 	if opts.Fallback != nil {
 		// Known services show up (as not yet connected) before they do.
@@ -131,7 +139,7 @@ func (t *Tower) Run(ctx context.Context, grpcAddr string) {
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		for _, timer := range t.faults {
-			timer.Stop()
+			timer.timer.Stop()
 		}
 	}()
 	t.events.add("info", "", "Control plane started")
@@ -158,6 +166,7 @@ func (t *Tower) Run(ctx context.Context, grpcAddr string) {
 			t.hub.broadcast(message{Type: "tick", Tick: &snap, Events: t.events.since(now.Add(-tickInterval))})
 		case <-analyze.C:
 			t.refreshFindings()
+			t.broadcastState()
 		}
 	}
 }
@@ -174,6 +183,9 @@ func (t *Tower) Session(stream pb.ControlPlane_SessionServer) error {
 	}
 	var declared backdraft.ServiceConfig
 	if err := json.Unmarshal(hello.DeclaredConfig, &declared); err != nil {
+		return fmt.Errorf("declared config: %w", err)
+	}
+	if err := declared.Validate(); err != nil {
 		return fmt.Errorf("declared config: %w", err)
 	}
 	name := hello.Service
@@ -283,18 +295,21 @@ func (t *Tower) setConfigs(cfgs map[string]backdraft.ServiceConfig, reason strin
 			t.mu.Unlock()
 			return fmt.Errorf("unknown service %q", name)
 		}
+		for peer := range cfgs[name].Clients {
+			if t.services[peer] == nil {
+				t.mu.Unlock()
+				return fmt.Errorf("%s calls unknown service %q", name, peer)
+			}
+		}
 	}
 	var changed []string
 	for name, cfg := range cfgs {
 		st := t.services[name]
+		cfg.Fault = st.effective.Fault // preserve experiments under the same lock as the policy update
 		if reflect.DeepEqual(st.effective, cfg) {
 			continue
 		}
-		st.effective = cfg.Clone()
-		raw, _ := json.Marshal(st.effective)
-		for sess := range st.sessions {
-			sess.push(raw)
-		}
+		t.pushConfigLocked(st, cfg)
 		changed = append(changed, name)
 	}
 	t.mu.Unlock()
@@ -309,14 +324,34 @@ func (t *Tower) setConfigs(cfgs map[string]backdraft.ServiceConfig, reason strin
 	return nil
 }
 
+func (t *Tower) pushConfigLocked(st *serviceState, cfg backdraft.ServiceConfig) {
+	st.effective = cfg.Clone()
+	raw, _ := json.Marshal(st.effective)
+	for sess := range st.sessions {
+		sess.push(raw)
+	}
+}
+
+func (t *Tower) resetPolicies() {
+	t.mu.Lock()
+	for _, timer := range t.faults {
+		timer.timer.Stop()
+	}
+	t.faults = map[string]*faultTimer{}
+	for _, st := range t.services {
+		t.pushConfigLocked(st, st.declared)
+	}
+	t.mu.Unlock()
+	t.events.add("config", "", "Reset policies and cleared experiments")
+	t.broadcastState()
+	t.refreshFindings()
+}
+
 // setFault injects a brownout into service, cleared after d if d > 0.
 func (t *Tower) setFault(service string, f backdraft.Fault, d time.Duration) error {
-	sys := t.system(false)
-	cfg, ok := sys.Services[service]
-	if !ok {
-		return fmt.Errorf("unknown service %q", service)
+	if err := (backdraft.ServiceConfig{Fault: f}).Validate(); err != nil {
+		return err
 	}
-	cfg.Fault = f
 	reason := fmt.Sprintf("Fault on %s: +%dms latency", service, f.LatencyMs)
 	if f.ErrorRate > 0 {
 		reason += fmt.Sprintf(", %.0f%% errors", 100*f.ErrorRate)
@@ -327,20 +362,46 @@ func (t *Tower) setFault(service string, f backdraft.Fault, d time.Duration) err
 	if !f.Active() {
 		reason = "Fault on " + service + " cleared"
 	}
-	if err := t.setConfigs(map[string]backdraft.ServiceConfig{service: cfg}, ""); err != nil {
-		return err
-	}
-	t.events.add("fault", service, reason)
 	t.mu.Lock()
+	st := t.services[service]
+	if st == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("unknown service %q", service)
+	}
+	cfg := st.effective
+	cfg.Fault = f
+	t.pushConfigLocked(st, cfg)
 	if old := t.faults[service]; old != nil {
-		old.Stop()
+		old.timer.Stop()
 		delete(t.faults, service)
 	}
 	if d > 0 && f.Active() {
-		t.faults[service] = time.AfterFunc(d, func() { t.setFault(service, backdraft.Fault{}, 0) })
+		timer := &faultTimer{}
+		timer.timer = time.AfterFunc(d, func() { t.expireFault(service, timer) })
+		t.faults[service] = timer
 	}
 	t.mu.Unlock()
+	t.events.add("fault", service, reason)
+	t.broadcastState()
 	return nil
+}
+
+func (t *Tower) expireFault(service string, timer *faultTimer) {
+	t.mu.Lock()
+	// A callback already running when Stop was called must not clear a newer
+	// experiment or undo a reset. Compare identity while holding the policy lock.
+	if t.faults[service] != timer {
+		t.mu.Unlock()
+		return
+	}
+	delete(t.faults, service)
+	st := t.services[service]
+	cfg := st.effective
+	cfg.Fault = backdraft.Fault{}
+	t.pushConfigLocked(st, cfg)
+	t.mu.Unlock()
+	t.events.add("fault", service, "Fault on "+service+" cleared")
+	t.broadcastState()
 }
 
 // observed gathers what live traffic says, for the analyzer.

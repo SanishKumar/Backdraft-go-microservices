@@ -175,12 +175,13 @@ func NewMemoryRepository() Repository {
 func (r *memoryRepository) Close() {}
 
 func (r *memoryRepository) PutOrder(_ context.Context, o Order) (*Order, bool, error) {
+	o = cloneOrder(o)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if o.IdempotencyKey != "" {
 		k := o.AccountID + "\x00" + o.IdempotencyKey
 		if id, ok := r.byKey[k]; ok {
-			existing := r.byID[id]
+			existing := cloneOrder(r.byID[id])
 			return &existing, false, nil
 		}
 		r.byKey[k] = o.ID
@@ -198,7 +199,8 @@ func (r *memoryRepository) PutOrder(_ context.Context, o Order) (*Order, bool, e
 		ids = append([]string(nil), ids[len(ids)-recentOrdersLimit:]...)
 	}
 	r.byAccount[o.AccountID] = ids
-	return &o, true, nil
+	result := cloneOrder(o)
+	return &result, true, nil
 }
 
 func (r *memoryRepository) GetOrderByIdempotencyKey(_ context.Context, accountID, key string) (*Order, error) {
@@ -208,7 +210,7 @@ func (r *memoryRepository) GetOrderByIdempotencyKey(_ context.Context, accountID
 	if !ok {
 		return nil, ErrNotFound
 	}
-	o := r.byID[id]
+	o := cloneOrder(r.byID[id])
 	return &o, nil
 }
 
@@ -218,7 +220,12 @@ func (r *memoryRepository) GetOrdersForAccount(_ context.Context, accountID stri
 	ids := r.byAccount[accountID]
 	orders := []Order{}
 	for i := len(ids) - 1; i >= 0 && len(orders) < limit; i-- {
-		orders = append(orders, r.byID[ids[i]])
+		orders = append(orders, cloneOrder(r.byID[ids[i]]))
 	}
 	return orders, nil
+}
+
+func cloneOrder(o Order) Order {
+	o.Products = append([]OrderedProduct(nil), o.Products...)
+	return o
 }

@@ -10,11 +10,12 @@ import type {
   Variant,
 } from './types'
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function call<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status} ${res.statusText}`)
@@ -22,12 +23,12 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
-  setLoad: (rps: number) => call<{ rps: number }>('PUT', '/api/load', { rps }),
-  fault: (service: string, latencyMs: number, durationS: number, errorRate = 0) =>
-    call<State>('POST', '/api/fault', { service, latencyMs, durationS, errorRate }),
+  setLoad: (rps: number, signal?: AbortSignal) => call<{ rps: number }>('PUT', '/api/load', { rps }, signal),
+  fault: (service: string, latencyMs: number, durationS: number, errorRate = 0, signal?: AbortSignal) =>
+    call<State>('POST', '/api/fault', { service, latencyMs, durationS, errorRate }, signal),
   clearFault: (service: string) => call<State>('POST', '/api/fault', { service, latencyMs: 0, durationS: 0 }),
-  mitigations: (m: Mitigations) => call<State>('POST', '/api/mitigations', m),
-  reset: () => call<State>('POST', '/api/reset'),
+  mitigations: (m: Mitigations, signal?: AbortSignal) => call<State>('POST', '/api/mitigations', m, signal),
+  reset: (signal?: AbortSignal) => call<State>('POST', '/api/reset', undefined, signal),
   patch: (patch: Record<string, ServiceConfig>, reason: string) => call<State>('POST', '/api/patch', { patch, reason }),
   setConfig: (service: string, cfg: ServiceConfig) => call<State>('PUT', `/api/services/${service}/config`, cfg),
   traces: (filter: 'interesting' | 'all', limit = 80) =>

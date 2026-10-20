@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/SanishKumar/go-microservices/account"
@@ -10,6 +11,45 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestRejectsQuantitiesAndTotalsOutsideStorageRange(t *testing.T) {
+	for _, lines := range [][]Line{
+		{{"lamp", math.MaxUint32}},
+		{{"lamp", math.MaxInt32}, {"lamp", 1}},
+	} {
+		s, _ := newTestService()
+		if _, _, err := s.PostOrder(context.Background(), "acct", lines, ""); !errors.Is(err, ErrInvalidOrder) {
+			t.Errorf("accepted invalid quantity: %v", err)
+		}
+	}
+	s, products := newTestService()
+	products["lamp"] = catalog.Product{ID: "lamp", Price: 9_999_999_999.99}
+	if _, _, err := s.PostOrder(context.Background(), "acct", []Line{{"lamp", 2}}, ""); !errors.Is(err, ErrInvalidOrder) {
+		t.Fatalf("accepted overflowing total: %v", err)
+	}
+	products["lamp"] = catalog.Product{ID: "lamp", Price: math.NaN()}
+	if _, _, err := s.PostOrder(context.Background(), "acct", []Line{{"lamp", 1}}, ""); !errors.Is(err, ErrInvalidOrder) {
+		t.Fatalf("accepted nonfinite catalog price: %v", err)
+	}
+}
+
+func TestMemoryOrderHistoryCannotBeMutatedByCallers(t *testing.T) {
+	s, _ := newTestService()
+	o, _, err := s.PostOrder(context.Background(), "acct", []Line{{"lamp", 1}}, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.Products[0].Price = 99
+	history, err := s.GetOrdersForAccount(context.Background(), "acct")
+	if err != nil || history[0].Products[0].Price != 0.1 {
+		t.Fatalf("returned order changed storage: %v, %v", history, err)
+	}
+	history[0].Products[0].Price = 123
+	replay, _, err := s.PostOrder(context.Background(), "acct", []Line{{"lamp", 1}}, "key")
+	if err != nil || replay.Products[0].Price != 0.1 {
+		t.Fatalf("history changed replay: %v, %v", replay, err)
+	}
+}
 
 type fakeAccounts struct{ err error }
 

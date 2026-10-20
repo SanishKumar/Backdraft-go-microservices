@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"context"
 	"math"
 	"math/rand/v2"
 	"sort"
@@ -310,6 +311,15 @@ type engine struct {
 
 // Run simulates sc against m.
 func Run(m *Model, sc Scenario) *Result {
+	r, _ := RunContext(context.Background(), m, sc)
+	return r
+}
+
+// RunContext stops processing when the caller cancels or its deadline expires.
+func RunContext(ctx context.Context, m *Model, sc Scenario) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if sc.StepS <= 0 {
 		sc.StepS = 0.25
 	}
@@ -401,6 +411,11 @@ func Run(m *Model, sc Scenario) *Result {
 	nextCheck := lastFault + 10
 	events := 0
 	for len(e.q) > 0 {
+		if events%1024 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		ev := e.q.pop()
 		if ev.t > sc.DurationS {
 			break
@@ -445,7 +460,7 @@ func Run(m *Model, sc Scenario) *Result {
 		scale(ed.BudgetDenied)
 	}
 	e.res.Verdict = judge(e.res, sc, m)
-	return e.res
+	return e.res, nil
 }
 
 // edgeTo returns s's edge to peer, creating a default one (plain gRPC

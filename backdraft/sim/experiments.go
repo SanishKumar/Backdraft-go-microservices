@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"context"
 	"math"
 	"runtime"
 	"runtime/debug"
@@ -20,7 +21,9 @@ func burst() func() {
 	gcMu.Lock()
 	if gcBursts == 0 {
 		gcRestore = debug.SetGCPercent(-1)
-		debug.SetGCPercent(max(gcRestore, 400))
+		if gcRestore >= 0 {
+			debug.SetGCPercent(max(gcRestore, 400))
+		}
 	}
 	gcBursts++
 	gcMu.Unlock()
@@ -107,6 +110,12 @@ type MapCell struct {
 // its own: below it an incident ends when its trigger does, above it the
 // incident needs an operator.
 func StabilityMap(m *Model, spec MapSpec) []MapCell {
+	cells, _ := StabilityMapContext(context.Background(), m, spec)
+	return cells
+}
+
+// StabilityMapContext cancels unfinished cells when ctx ends.
+func StabilityMapContext(ctx context.Context, m *Model, spec MapSpec) ([]MapCell, error) {
 	if spec.WarmS <= 0 {
 		spec.WarmS = 6
 	}
@@ -122,7 +131,7 @@ func StabilityMap(m *Model, spec MapSpec) []MapCell {
 	}
 	work := make(chan int)
 	var wg sync.WaitGroup
-	for w := 0; w < runtime.GOMAXPROCS(0); w++ {
+	for w := 0; w < min(4, runtime.GOMAXPROCS(0), len(cells)); w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -130,17 +139,30 @@ func StabilityMap(m *Model, spec MapSpec) []MapCell {
 				c := &cells[i]
 				sc := Brownout(c.Load, spec.Service, spec.LatencyMs, spec.WarmS, c.Duration, spec.ObserveS, spec.Seed+uint64(i))
 				sc.StopWhenStuck = true
-				v := Run(m, sc).Verdict
+				r, err := RunContext(ctx, m, sc)
+				if err != nil {
+					return
+				}
+				v := r.Verdict
 				c.Kind, c.RecoveryS, c.FinalRatio, c.MinRatio = v.Kind, v.RecoveryS, v.FinalRatio, v.MinRatio
 			}
 		}()
 	}
 	for i := range cells {
-		work <- i
+		select {
+		case work <- i:
+		case <-ctx.Done():
+			close(work)
+			wg.Wait()
+			return nil, ctx.Err()
+		}
 	}
 	close(work)
 	wg.Wait()
-	return cells
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return cells, nil
 }
 
 // Hysteresis ramps load from lo to hi and back over periodS with no fault.
@@ -149,7 +171,12 @@ func StabilityMap(m *Model, spec MapSpec) []MapCell {
 // the metastable region, loads at which the system is healthy if it gets
 // there from below and stuck if it gets there from above.
 func Hysteresis(m *Model, lo, hi, periodS float64, seed uint64) *Result {
-	return Run(m, Scenario{
+	r, _ := HysteresisContext(context.Background(), m, lo, hi, periodS, seed)
+	return r
+}
+
+func HysteresisContext(ctx context.Context, m *Model, lo, hi, periodS float64, seed uint64) (*Result, error) {
+	return RunContext(ctx, m, Scenario{
 		DurationS: periodS,
 		Load:      []LoadPoint{{T: 0, RPS: lo}, {T: periodS / 2, RPS: hi}, {T: periodS, RPS: lo}},
 		Seed:      seed,

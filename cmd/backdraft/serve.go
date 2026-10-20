@@ -28,6 +28,7 @@ func runServe(args []string, stderr io.Writer) int {
 	grpcAddr := fs.String("grpc", "127.0.0.1:7071", "address agents connect to")
 	httpAddr := fs.String("http", "127.0.0.1:7070", "address of the API and UI")
 	ui := fs.String("ui", "", "directory of the built web UI to serve")
+	entry := fs.String("entry", "", "service receiving external traffic (default gateway, or users with --load-target)")
 	target := fs.String("load-target", "", "GraphQL endpoint to drive with the load generator (empty disables it)")
 	rps := fs.Float64("rps", 0, "initial load, requests per second")
 	fs.Usage = func() {
@@ -37,17 +38,38 @@ func runServe(args []string, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if fs.NArg() != 0 {
+		fs.Usage()
+		return 2
+	}
+	if *entry == "" {
+		*entry = reference.Gateway
+		if *target != "" {
+			*entry = reference.Users
+		}
+	}
+	if *target != "" && *entry != reference.Users {
+		fmt.Fprintln(stderr, "--load-target drives the reference system and requires --entry users")
+		return 2
+	}
+	if err := (tower.LoadConfig{RPS: *rps}).Validate(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 
 	ctx, stop := serve.Context()
 	defer stop()
-	t := tower.New(tower.Options{
-		Entry:       reference.Users,
+	opts := tower.Options{
+		Entry:       *entry,
 		LoadTarget:  *target,
 		EntryPolicy: reference.UsersPolicy(),
-		Fallback:    reference.SimModel(reference.System()),
 		InitialRPS:  *rps,
 		UIDir:       *ui,
-	})
+	}
+	if *target != "" {
+		opts.Fallback = reference.SimModel(reference.System())
+	}
+	t := tower.New(opts)
 
 	lis, err := net.Listen("tcp", *grpcAddr)
 	if err != nil {

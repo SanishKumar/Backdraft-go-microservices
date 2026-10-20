@@ -16,6 +16,21 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+func TestPanickingHandlerReleasesWorker(t *testing.T) {
+	a := New("api", ServiceConfig{Server: ServerPolicy{Workers: 1}})
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("expected handler panic")
+			}
+		}()
+		a.serve(context.Background(), inbound{}, func(context.Context) error { panic("application failure") })
+	}()
+	if inUse, queued, _ := a.limiter.Stats(); inUse != 0 || queued != 0 {
+		t.Fatalf("panic leaked admission: %d workers, %d queued", inUse, queued)
+	}
+}
+
 func TestCodeNames(t *testing.T) {
 	for c, want := range map[codes.Code]string{
 		codes.OK:                "OK",

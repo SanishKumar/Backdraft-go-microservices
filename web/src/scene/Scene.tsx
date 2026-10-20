@@ -64,6 +64,7 @@ function FrameFreeArea({ halfWidth, halfDepth }: { halfWidth: number; halfDepth:
 }
 
 export function Scene() {
+  const syntheticEntry = useStore((s) => !!s.state?.load)
   const topology = useStore((s) => s.state?.topology)
   const entry = useStore((s) => s.state?.entry ?? 'users')
   const selected = useStore((s) => s.selected)
@@ -74,6 +75,7 @@ export function Scene() {
 
   return (
     <Canvas
+      fallback={<div className="empty">3D is unavailable in this browser. Metrics, traces, and policy controls remain available.</div>}
       dpr={[1, 2]}
       camera={{ position: [-3, 15.5, 24], fov: 34, near: 0.5, far: 160 }}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
@@ -90,7 +92,7 @@ export function Scene() {
         <group position-y={-0.6}>
           <Edges edges={graph.edges} highlighted={highlighted} />
           {[...graph.nodes.values()].map((n) =>
-            n.name === entry ? (
+            n.name === entry && syntheticEntry ? (
               <EntryNode key={n.name} node={n} />
             ) : (
               <ServiceNode key={n.name} node={n} selected={selected === n.name} onSelect={() => select(n.name)} />

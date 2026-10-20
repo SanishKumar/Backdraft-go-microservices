@@ -11,6 +11,7 @@ import (
 
 	"github.com/SanishKumar/go-microservices/account"
 	"github.com/SanishKumar/go-microservices/catalog"
+	"github.com/SanishKumar/go-microservices/internal/money"
 	"github.com/segmentio/ksuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -81,6 +82,9 @@ func NewService(r Repository, accounts AccountLookup, products ProductLookup) Se
 }
 
 func (s *orderService) PostOrder(ctx context.Context, accountID string, lines []Line, idempotencyKey string) (*Order, bool, error) {
+	if accountID == "" {
+		return nil, false, fmt.Errorf("%w: account id is required", ErrInvalidOrder)
+	}
 	merged, err := mergeLines(lines)
 	if err != nil {
 		return nil, false, err
@@ -134,7 +138,10 @@ func (s *orderService) PostOrder(ctx context.Context, accountID string, lines []
 			missing = append(missing, l.ProductID)
 			continue
 		}
-		cents := int64(math.Round(p.Price * 100))
+		cents, valid := money.Cents(p.Price)
+		if !valid || cents > (money.MaxCents-totalCents)/int64(l.Quantity) {
+			return nil, false, fmt.Errorf("%w: order total exceeds the supported price range", ErrInvalidOrder)
+		}
 		totalCents += cents * int64(l.Quantity)
 		o.Products = append(o.Products, OrderedProduct{
 			ID:          p.ID,
@@ -171,6 +178,9 @@ func mergeLines(lines []Line) ([]Line, error) {
 	for _, l := range lines {
 		if l.ProductID == "" || l.Quantity == 0 {
 			return nil, fmt.Errorf("%w: every line needs a product id and a positive quantity", ErrInvalidOrder)
+		}
+		if uint64(qty[l.ProductID])+uint64(l.Quantity) > math.MaxInt32 {
+			return nil, fmt.Errorf("%w: product quantity exceeds %d", ErrInvalidOrder, int64(math.MaxInt32))
 		}
 		qty[l.ProductID] += l.Quantity
 	}

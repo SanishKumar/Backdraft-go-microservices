@@ -68,13 +68,15 @@ func (a *Agent) serve(ctx context.Context, in inbound, handle func(context.Conte
 		span.QueueNanos = int64(time.Since(arrive))
 		return finish(errNotHandled{status.Error(codes.DeadlineExceeded, "backdraft: caller gave up while queued")}, pb.Outcome_EXPIRED)
 	}
+	// Release admission even if an application handler panics. HTTP's outer
+	// recovery must not leave the worker pool permanently exhausted.
+	defer release()
 	span.QueueNanos = int64(time.Since(arrive))
 	// The request may have queued across a config change; what applies
 	// now is what governs the work. A brownout slows the work done while
 	// it lasts, not the work that happened to arrive during it.
 	cfg = a.cfg.Load()
 	if cfg.Server.ShedExpired && ctx.Err() != nil {
-		release()
 		return finish(errNotHandled{status.Error(codes.DeadlineExceeded, "backdraft: caller gave up while queued")}, pb.Outcome_EXPIRED)
 	}
 
@@ -91,7 +93,6 @@ func (a *Agent) serve(ctx context.Context, in inbound, handle func(context.Conte
 	} else {
 		err = handle(withSpan(ctx, st))
 	}
-	release()
 	span.SelfNanos = int64(time.Since(workStart) - st.down.union())
 
 	st.mu.Lock()

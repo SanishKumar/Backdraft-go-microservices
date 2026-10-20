@@ -28,6 +28,28 @@ type LoadConfig struct {
 
 var defaultMix = map[string]float64{"Browse": 0.5, "AccountPage": 0.3, "Checkout": 0.2}
 
+func (c LoadConfig) Validate() error {
+	if math.IsNaN(c.RPS) || math.IsInf(c.RPS, 0) || c.RPS < 0 || c.RPS > 5000 {
+		return fmt.Errorf("rps must be within 0-5000")
+	}
+	if c.Mix != nil {
+		total := 0.0
+		for op, weight := range c.Mix {
+			if _, ok := defaultMix[op]; !ok {
+				return fmt.Errorf("unknown load operation %q", op)
+			}
+			if math.IsNaN(weight) || math.IsInf(weight, 0) || weight < 0 {
+				return fmt.Errorf("mix weights must be finite and non-negative")
+			}
+			total += weight
+		}
+		if total <= 0 || math.IsInf(total, 0) {
+			return fmt.Errorf("mix must have positive finite total weight")
+		}
+	}
+	return nil
+}
+
 // loadGen is an open-loop load generator: requests arrive as a Poisson
 // process at the configured rate whether or not earlier ones have
 // finished, as real users do. A closed-loop generator (N workers in a

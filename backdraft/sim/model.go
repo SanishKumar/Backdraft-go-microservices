@@ -13,6 +13,7 @@ package sim
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/SanishKumar/go-microservices/backdraft"
 )
@@ -61,6 +62,12 @@ type Op struct {
 
 // Validate checks that every reference in the model resolves.
 func (m *Model) Validate() error {
+	if m == nil {
+		return fmt.Errorf("model is nil")
+	}
+	if err := m.System().Validate(); err != nil {
+		return err
+	}
 	if _, ok := m.Services[m.Entry]; !ok {
 		return fmt.Errorf("entry %q is not a service", m.Entry)
 	}
@@ -72,15 +79,26 @@ func (m *Model) Validate() error {
 		if _, ok := m.Services[op.Service]; !ok {
 			return fmt.Errorf("op %s targets unknown service %q", op.Name, op.Service)
 		}
-		if op.Weight < 0 {
-			return fmt.Errorf("op %s has negative weight", op.Name)
+		if !validTime(op.Weight) {
+			return fmt.Errorf("op %s has invalid weight", op.Name)
 		}
 		total += op.Weight
 	}
-	if total <= 0 {
+	if !validTime(total) || total <= 0 {
 		return fmt.Errorf("ops have no weight")
 	}
 	for name, s := range m.Services {
+		if err := s.Config.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if !validTime(s.MeanSelfMs) {
+			return fmt.Errorf("%s has invalid mean self time", name)
+		}
+		for _, ms := range s.SelfMs {
+			if !validTime(ms) {
+				return fmt.Errorf("%s has invalid self time sample", name)
+			}
+		}
 		for method, shapes := range s.Shapes {
 			for _, sh := range shapes {
 				for _, g := range sh {
@@ -95,6 +113,8 @@ func (m *Model) Validate() error {
 	}
 	return nil
 }
+
+func validTime(n float64) bool { return n >= 0 && !math.IsNaN(n) && !math.IsInf(n, 0) }
 
 // WithConfigs returns a copy of m with the given service configurations
 // swapped in, to ask "what if the policy were this instead".

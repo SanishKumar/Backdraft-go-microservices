@@ -171,12 +171,12 @@ const cellColor = (c: MapCell) => {
   }
 }
 
-function Heatmap({ title, data, liveRps, onPick }: { title: string; data: MapResponse | null; liveRps?: number; onPick: (c: MapCell) => void }) {
+function Heatmap({ title, data, liveRps, onPick, busy }: { title: string; data: MapResponse | null; liveRps?: number; onPick: (c: MapCell) => void; busy: boolean }) {
   const [hover, setHover] = useState<MapCell | null>(null)
   if (!data) {
     return (
       <div className="card section" style={{ minHeight: 320, display: 'grid', placeItems: 'center' }}>
-        <span className="spinner" />
+        {busy ? <span className="spinner" /> : <span className="hint">Run a stability map to compare this policy.</span>}
       </div>
     )
   }
@@ -195,7 +195,7 @@ function Heatmap({ title, data, liveRps, onPick }: { title: string; data: MapRes
       <div className="hint" style={{ marginBottom: 14, minHeight: 36 }}>
         {stuck === 0
           ? `Survives every incident in this range: a ${data.latencyMs}ms slowdown of ${data.service} for up to ${Math.max(...data.durations)}s, at up to ${fmtRate(Math.max(...data.loads))} req/s.`
-          : `From ${fmtRate(firstFail)} req/s (${fmtPct((firstFail ?? 0) / data.capacity)} of capacity), some ${data.latencyMs}ms slowdowns of ${data.service} leave it down for good. ${stuck} of ${data.cells.length} scenarios do not recover.`}
+          : `From ${fmtRate(firstFail)} req/s (${fmtPct((firstFail ?? 0) / data.capacity)} of capacity), some ${data.latencyMs}ms slowdowns of ${data.service} do not recover within the observation window. ${stuck} of ${data.cells.length} scenarios remain overloaded.`}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr', gap: 8 }}>
         <div style={{ display: 'grid', gridTemplateRows: `repeat(${durations.length}, 1fr)`, gap: 3 }}>
@@ -340,6 +340,7 @@ export function PredictView() {
   const [results, setResults] = useState<VariantResult[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [maps, setMaps] = useState<[MapResponse | null, MapResponse | null]>([null, null])
+  const [mapBusy, setMapBusy] = useState(false)
   const [hyst, setHyst] = useState<HysteresisResponse | null>(null)
   const [hystBusy, setHystBusy] = useState(false)
   const fix = useMemo(storedFix, [])
@@ -362,6 +363,7 @@ export function PredictView() {
   )
 
   const runMaps = useCallback(async (service: string, latencyMs: number) => {
+    setMapBusy(true)
     setMaps([null, null])
     try {
       const [a, b] = await Promise.all([
@@ -371,12 +373,13 @@ export function PredictView() {
       setMaps([a, b])
     } catch (e) {
       toast((e as Error).message, true)
+    } finally {
+      setMapBusy(false)
     }
   }, [])
 
   useEffect(() => {
     run()
-    runMaps(scenario.service, scenario.latencyMs)
     if (fix) sessionStorage.removeItem('bd-sim-patch')
   }, []) // once on entry, with the defaults
 
@@ -421,17 +424,17 @@ export function PredictView() {
               <h1 style={{ fontSize: 19 }}>Stability map</h1>
               <p className="lede" style={{ margin: 0 }}>
                 Each cell is a full simulation: a {maps[0]?.latencyMs ?? scenario.latencyMs}ms slowdown of{' '}
-                {maps[0]?.service ?? scenario.service}, at a given load, for a given time. Red cells never recover. The edge of
-                the red region is where an incident stops ending when its trigger does.
+                {maps[0]?.service ?? scenario.service}, at a given load, for a given time. Red cells remain overloaded
+                through the model's observation window.
               </p>
             </div>
-            <button className="btn" onClick={() => runMaps(scenario.service, scenario.latencyMs)}>
+            <button className="btn" disabled={mapBusy || busy} onClick={() => runMaps(scenario.service, scenario.latencyMs)}>
               Map {scenario.service} +{scenario.latencyMs}ms
             </button>
           </div>
           <div className="grid-2">
-            <Heatmap title="Current policy" data={maps[0]} liveRps={liveRps} onPick={pick} />
-            <Heatmap title="With all mitigations" data={maps[1]} liveRps={liveRps} onPick={pick} />
+            <Heatmap title="Current policy" data={maps[0]} liveRps={liveRps} onPick={pick} busy={mapBusy} />
+            <Heatmap title="With all mitigations" data={maps[1]} liveRps={liveRps} onPick={pick} busy={mapBusy} />
           </div>
           <div className="legend" style={{ marginTop: 10 }}>
             <span><i style={{ background: 'var(--ok)', height: 8 }} />recovers (brighter is faster)</span>

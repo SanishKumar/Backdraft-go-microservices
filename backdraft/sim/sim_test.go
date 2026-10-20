@@ -1,12 +1,31 @@
 package sim
 
 import (
+	"context"
+	"errors"
 	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/SanishKumar/go-microservices/backdraft"
 )
+
+func TestCanceledSimulationsReleaseWorkers(t *testing.T) {
+	m := chain(threeTries, patientUser, fourWorkers)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := RunContext(ctx, m, Brownout(200, "back", 300, 8, 8, 30, 1)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled run: %v", err)
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer stop()
+	_, err := StabilityMapContext(ctx, m, MapSpec{Service: "back", LatencyMs: 300,
+		Loads: []float64{1000, 2000, 5000}, Durations: []float64{100, 200}, ObserveS: 300})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("map ignored deadline: %v", err)
+	}
+}
 
 // chain is users -> front -> back, with back as the only constrained
 // service: 4 workers at 10ms, so about 400 req/s.

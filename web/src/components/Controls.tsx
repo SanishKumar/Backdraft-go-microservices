@@ -216,9 +216,10 @@ export function MitigationToggles() {
 }
 
 export function Controls({ onPlay }: { onPlay: () => void }) {
+  const hasLoad = useStore((s) => !!s.state?.load)
   return (
     <div className="rail left" id="rail-left">
-      <div className="panel play-card">
+      {hasLoad && <div className="panel play-card">
         <div className="section">
           <div className="play-title">See a metastable failure happen</div>
           <div className="hint">
@@ -232,9 +233,9 @@ export function Controls({ onPlay }: { onPlay: () => void }) {
             Play the incident
           </button>
         </div>
-      </div>
+      </div>}
       <div className="panel scroll grow">
-        <Traffic />
+        {hasLoad && <Traffic />}
         <Brownout />
         <MitigationToggles />
       </div>
