@@ -76,7 +76,7 @@ it.
 
 ## Running it
 
-**Lab (no Docker):** Go 1.24 and Node 20+.
+**Lab (no Docker):** Go 1.24 and Node 22.12+ (or Node 20.19+).
 
 ```bash
 cd web && npm ci && npm run build && cd ..
@@ -111,6 +111,30 @@ HIGH      order can outlast gateway's 1.5s timeout
 ...
 3 critical, 4 high, 3 medium, 0 low
 exit status 1
+```
+
+The reference policy is deliberately risky so the incident can be reproduced.
+For a passing CI example, use `examples/hardened.policy.json`: it adds the
+mitigations, disables retries on account/product creation, and fits gateway
+calls within the user's deadline.
+
+```bash
+go run ./cmd/backdraft check examples/hardened.policy.json
+```
+
+The [CI workflow](.github/workflows/ci.yml) runs on pushes to `main` and pull
+requests. It checks formatting and vet, runs unit tests with Linux's race
+detector, reproduces the live incident, builds the UI from the lockfile, and
+builds and boots Docker Compose with Postgres and Elasticsearch. The Compose
+smoke check verifies the served UI, all five agent sessions, checkout,
+idempotent replays, order history, and live policy changes.
+
+Run that same smoke check against a local lab with Python 3:
+
+```bash
+python scripts/smoke.py
+# For Compose's gateway port:
+python scripts/smoke.py --gateway http://127.0.0.1:8000/graphql --wait 180
 ```
 
 ## How it works
@@ -270,8 +294,9 @@ ordinary: what a team writes when it configures each hop on its own.
 - **The control plane API is unauthenticated.** It can change live
   policy, so it binds to localhost and accepts WebSocket origins from
   localhost only. Put it behind your own auth before exposing it.
-- **The Docker Compose path was not run in the environment this was
-  developed in**; the lab path and every test were.
+- **Docker is validated by the Compose CI job.** The original development
+  machine has no Docker installation; check the job's result for the current
+  commit before relying on that path.
 
 ## Related work
 

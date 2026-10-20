@@ -3,6 +3,7 @@ package tower
 import (
 	"context"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -152,6 +153,51 @@ func TestSessionPushesConfigToAgents(t *testing.T) {
 	}
 	if err := tw.setConfigs(map[string]backdraft.ServiceConfig{"nope": declared}, ""); err == nil {
 		t.Fatal("accepted a config for an unknown service")
+	}
+}
+
+func TestRejectedPatchDoesNotChangeAnyService(t *testing.T) {
+	tw := New(Options{})
+	declared := backdraft.ServiceConfig{Server: backdraft.ServerPolicy{Workers: 4}}
+	tw.services["db"] = &serviceState{declared: declared, effective: declared, sessions: map[*session]struct{}{}}
+	changed := declared.Clone()
+	changed.Server.Workers = 9
+	// Repeat to exercise both map iteration orders. A rejected multi-service
+	// patch must never push its valid subset to connected agents.
+	for i := 0; i < 100; i++ {
+		err := tw.setConfigs(map[string]backdraft.ServiceConfig{"db": changed, "unknown": declared}, "test")
+		if err == nil {
+			t.Fatal("accepted a patch containing an unknown service")
+		}
+		if got := tw.system(false).Services["db"]; !reflect.DeepEqual(got, declared) {
+			t.Fatalf("rejected patch changed the effective policy: %+v", got)
+		}
+	}
+}
+
+func TestCapacityTracksCalibrationWithoutPolicyChanges(t *testing.T) {
+	m := &sim.Model{
+		Entry: "users",
+		Services: map[string]sim.ServiceModel{
+			"users": {},
+			"db":    {Config: backdraft.ServiceConfig{Server: backdraft.ServerPolicy{Workers: 1}}, MeanSelfMs: 1},
+		},
+		Ops: []sim.Op{{Name: "Read", Service: "db", Weight: 1}},
+	}
+	fast, _ := capacityOf(m)
+	db := m.Services["db"]
+	db.SelfMs = []float64{10} // the live calibrator learned the real self time
+	m.Services["db"] = db
+	slow, bottleneck := capacityOf(m)
+	if fast <= 0 || slow <= 0 || slow >= fast/2 || bottleneck != "db" {
+		t.Fatalf("capacity ignored new calibration: fast %.1f, slow %.1f (%s)", fast, slow, bottleneck)
+	}
+}
+
+func TestLoadGeneratorIsReadyBeforeRun(t *testing.T) {
+	tw := New(Options{LoadTarget: "http://127.0.0.1:1/graphql", InitialRPS: 123})
+	if tw.load == nil || tw.load.config().RPS != 123 {
+		t.Fatal("load generator must be initialized before HTTP and agent sessions start")
 	}
 }
 

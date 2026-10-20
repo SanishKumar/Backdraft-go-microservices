@@ -75,7 +75,8 @@ export function useDemo() {
         text: `Users send 200 requests a second to a system that can serve about ${Math.round(capacity / 10) * 10 || 'nine hundred'}. Every hop retries failed calls up to three times, which is a sensible choice when you look at one hop at a time.`,
         live: () => `${fmtPct(successRatio())} of requests succeed`,
       })
-      await waitFor(() => successRatio() > 0.97, 12000, s)
+      const ready = await waitFor(() => useStore.getState().state?.loadReady === true && successRatio() > 0.97, 30000, s)
+      if (!ready) throw new Error('The lab has not reached a healthy baseline yet. Reset it and let the backlog drain before replaying the incident.')
       await sleep(5000, s)
 
       await api.fault('catalog', 300, 8)
@@ -92,6 +93,15 @@ export function useDemo() {
         live: () => `${fmtPct(successRatio())} succeed · fault cleared`,
       })
       await sleep(10000, s)
+
+      if (successRatio() > 0.2) {
+        at(1, {
+          step: 'The system recovered on its own',
+          text: 'This run did not reproduce a sustained outage. The result depends on the observed service times and traffic. Open Predict to explore the failure boundary for this machine.',
+          final: true,
+        })
+        return
+      }
 
       at(0.6, {
         step: '4 / 5 · Metastable',
@@ -110,7 +120,7 @@ export function useDemo() {
       const healed = await waitFor(() => successRatio() > 0.97, 45000, s)
       const took = Math.round((Date.now() - t0) / 1000)
       at(1, {
-        step: 'Recovered',
+        step: healed ? 'Recovered' : 'Still recovering',
         text: healed
           ? `Back to full health ${took} seconds after the change, with the incident long over. The Predict tab maps every load and incident size this policy survives, before production finds out.`
           : 'Still draining. Try switching on "Shed expired work" as well, then open the Predict tab to see why it helps.',

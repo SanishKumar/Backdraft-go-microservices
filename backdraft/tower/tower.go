@@ -111,6 +111,11 @@ func New(opts Options) *Tower {
 			t.services[name] = &serviceState{declared: s.Config.Clone(), effective: s.Config.Clone(), sessions: map[*session]struct{}{}}
 		}
 	}
+	if opts.LoadTarget != "" {
+		users := backdraft.New(opts.Entry, opts.EntryPolicy)
+		t.load = newLoadGen(opts.LoadTarget, users, t.metrics)
+		t.load.set(LoadConfig{RPS: opts.InitialRPS})
+	}
 	return t
 }
 
@@ -118,13 +123,17 @@ func New(opts Options) *Tower {
 // users agent reports to the control plane at grpcAddr. It blocks until
 // ctx ends.
 func (t *Tower) Run(ctx context.Context, grpcAddr string) {
-	if t.opts.LoadTarget != "" {
-		users := backdraft.New(t.opts.Entry, t.opts.EntryPolicy)
-		go users.Run(ctx, grpcAddr)
-		t.load = newLoadGen(t.opts.LoadTarget, users, t.metrics)
-		t.load.set(LoadConfig{RPS: t.opts.InitialRPS})
+	if t.load != nil {
+		go t.load.agent.Run(ctx, grpcAddr)
 		go t.load.run(ctx)
 	}
+	defer func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		for _, timer := range t.faults {
+			timer.Stop()
+		}
+	}()
 	t.events.add("info", "", "Control plane started")
 
 	tick := time.NewTicker(tickInterval)
@@ -202,7 +211,8 @@ func (t *Tower) Session(stream pb.ControlPlane_SessionServer) error {
 		t.broadcastState()
 	}()
 
-	ctx := stream.Context()
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
 	sendErr := make(chan error, 1)
 	go func() {
 		for {
@@ -267,13 +277,16 @@ func (t *Tower) setConfigs(cfgs map[string]backdraft.ServiceConfig, reason strin
 		}
 	}
 	t.mu.Lock()
-	var changed []string
-	for name, cfg := range cfgs {
-		st := t.services[name]
-		if st == nil {
+	// Validate the complete patch before changing or pushing any policy.
+	for name := range cfgs {
+		if t.services[name] == nil {
 			t.mu.Unlock()
 			return fmt.Errorf("unknown service %q", name)
 		}
+	}
+	var changed []string
+	for name, cfg := range cfgs {
+		st := t.services[name]
 		if reflect.DeepEqual(st.effective, cfg) {
 			continue
 		}
@@ -401,9 +414,10 @@ var (
 )
 
 // capacity estimates the system's healthy capacity from the current
-// model, cached per policy set.
+// model. Timings, call shapes and request mix are part of the cache key:
+// calibration can change capacity without changing any policy.
 func capacityOf(m *sim.Model) (float64, string) {
-	raw, _ := json.Marshal(m.System())
+	raw, _ := json.Marshal(m)
 	key := string(raw)
 	capacityMu.Lock()
 	if v, ok := capacityCache[key]; ok {

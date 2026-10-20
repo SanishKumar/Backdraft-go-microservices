@@ -25,8 +25,8 @@ system's GraphQL API.
 func runServe(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	grpcAddr := fs.String("grpc", ":7071", "address agents connect to")
-	httpAddr := fs.String("http", ":7070", "address of the API and UI")
+	grpcAddr := fs.String("grpc", "127.0.0.1:7071", "address agents connect to")
+	httpAddr := fs.String("http", "127.0.0.1:7070", "address of the API and UI")
 	ui := fs.String("ui", "", "directory of the built web UI to serve")
 	target := fs.String("load-target", "", "GraphQL endpoint to drive with the load generator (empty disables it)")
 	rps := fs.Float64("rps", 0, "initial load, requests per second")

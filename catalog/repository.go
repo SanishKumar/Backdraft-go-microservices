@@ -87,6 +87,11 @@ func (r *elasticRepository) ListProducts(ctx context.Context, skip, take uint64)
 		Query(elastic.NewMatchAllQuery()).
 		From(int(skip)).Size(int(take)).
 		Do(ctx)
+	// A fresh Elasticsearch database has no catalog index until the first
+	// write. Treat it as an empty catalog so the load generator can seed it.
+	if elastic.IsNotFound(err) {
+		return []Product{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +133,9 @@ func (r *elasticRepository) SearchProducts(ctx context.Context, query string, sk
 		Query(elastic.NewMultiMatchQuery(query, "name", "description")).
 		From(int(skip)).Size(int(take)).
 		Do(ctx)
+	if elastic.IsNotFound(err) {
+		return []Product{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
