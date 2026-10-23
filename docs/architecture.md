@@ -71,3 +71,15 @@ The in-memory mode bounds retained order history for long-running demos.
 Compose uses Postgres for accounts and orders and Elasticsearch for products.
 The latter uses a legacy client/server pair and is confined to the development
 network.
+
+## Browser workspace
+
+The React UI consumes the control plane’s WebSocket stream. Charts retain a
+bounded rolling history, and the dependency graph displays current attempt
+rates and queues. Service controls and policy edits use the HTTP API.
+
+The hero constellation is a deterministic Canvas 2D drawing. It is an abstract
+system portrait, not a trace visualization; amber accents respond to the live
+failure ratio. Motion pauses off screen and when the browser is hidden, and
+reduced-motion preferences render a still frame. Inter is bundled locally.
+No WebGL context or external font service is required.

@@ -57,7 +57,7 @@ function Traffic() {
     editing.current = false
     api.setLoad(v).catch((e) => toast(e.message, true))
   }
-  const max = Math.max(400, Math.round((capacity * 0.6) / 50) * 50)
+  const max = Math.min(5000, Math.max(400, load?.rps ?? 0, Math.round((capacity * 0.6) / 50) * 50))
 
   if (!load) {
     return (
@@ -205,40 +205,27 @@ export function MitigationToggles() {
         </button>
       </div>
       {MITIGATIONS.map((x) => (
-        <label key={x.key} className="toggle" onClick={(e) => (e.preventDefault(), !busy && set({ ...m, [x.key]: !m[x.key] }))}>
+        <div key={x.key} className="toggle">
           <span className="t-name">{x.name}</span>
-          <button type="button" className="switch" role="switch" aria-checked={m[x.key]} aria-label={x.name} disabled={busy} />
+          <button type="button" className="switch" role="switch" aria-checked={m[x.key]} aria-label={x.name} disabled={busy} onClick={() => set({ ...m, [x.key]: !m[x.key] })} />
           <span className="t-desc">{x.desc}</span>
-        </label>
+        </div>
       ))}
     </div>
   )
 }
 
-export function Controls({ onPlay }: { onPlay: () => void }) {
-  const hasLoad = useStore((s) => !!s.state?.load)
+export function Controls() {
   return (
-    <div className="rail left" id="rail-left">
-      {hasLoad && <div className="panel play-card">
-        <div className="section">
-          <div className="play-title">See a metastable failure happen</div>
-          <div className="hint">
-            A 60-second walkthrough: a short slowdown takes this system down, it stays down after the slowdown ends, and one
-            policy change brings it back.
-          </div>
-          <button className="btn block" style={{ marginTop: 10 }} onClick={onPlay}>
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <path d="M2 1l7 4-7 4z" fill="currentColor" />
-            </svg>
-            Play the incident
-          </button>
-        </div>
-      </div>}
-      <div className="panel scroll grow">
-        {hasLoad && <Traffic />}
-        <Brownout />
-        <MitigationToggles />
+    <section className="chapter experiment" id="experiment" aria-labelledby="experiment-title">
+      <div className="section-heading">
+        <div><div className="eyebrow">02 / Experiment</div><h2 id="experiment-title">Create the fault.<br />Find the way back.</h2></div>
+        <p className="section-intro">Choose a slowdown, watch the backlog grow, and change one policy at a time. Every control acts on the connected services.</p>
       </div>
-    </div>
+      <div className="experiment-grid">
+        <div><Traffic /><Brownout /></div>
+        <div><MitigationToggles /><a href="#observe" className="btn ghost">Watch the live response <span aria-hidden>↗</span></a></div>
+      </div>
+    </section>
   )
 }

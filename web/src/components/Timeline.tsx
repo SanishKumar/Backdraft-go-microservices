@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import type { ControlEvent, Tick } from '../types'
 import { fmtCount, fmtPct, fmtRate } from '../format'
@@ -31,6 +31,7 @@ function sumOf<T>(rec: Record<string, T>, pick: (v: T) => number) {
 }
 
 export function Timeline() {
+  const [metric, setMetric] = useState(0)
   const ticks = useStore((s) => s.ticks)
   const events = useStore((s) => s.events)
   const entry = useStore((s) => s.state?.entry ?? 'users')
@@ -63,80 +64,39 @@ export function Timeline() {
   const bands = useMemo(() => faultBands(events, now), [events, now])
   const tone = (ok: boolean, warn: boolean) => (ok ? 'var(--ok)' : warn ? 'var(--retry)' : 'var(--bad)')
 
+  const metrics = [
+    { name: 'Successful requests', value: fmtPct(goodRatio), unit: `of ${fmtRate(data.offered[last])} req/s`, color: goodRatio === undefined ? 'var(--text)' : tone(goodRatio > .97, goodRatio > .6) },
+    { name: 'Retry amplification', value: amp === undefined ? '–' : `×${amp.toFixed(2)}`, unit: 'attempts per call', color: amp === undefined ? 'var(--text)' : tone(amp < 1.15, amp < 1.6) },
+    { name: 'Backlog', value: fmtCount(data.queued[last]), unit: waste > .05 ? `${fmtPct(waste)} of work wasted` : 'requests queued', color: (data.queued[last] ?? 0) > 20 ? 'var(--retry)' : 'var(--text)' },
+  ]
+  const series = [
+    [
+      { key: 'offered', label: 'offered', values: data.offered, color: 'var(--text-3)', dashed: true, width: 1 },
+      { key: 'goodput', label: 'succeeded', values: data.goodput, color: 'var(--ok)', area: true },
+      { key: 'failed', label: 'failed', values: data.failed, color: 'var(--bad)' },
+    ],
+    [
+      { key: 'requests', label: 'calls', values: data.requests, color: 'var(--text-3)', width: 1.2 },
+      { key: 'attempts', label: 'attempts', values: data.attempts, color: 'var(--retry)', area: true },
+    ],
+    [{ key: 'queued', label: 'queued', values: data.queued, color: 'var(--retry)', area: true }],
+  ]
   return (
-    <div className="dock panel" id="dock">
-      <div className="chart">
-        <div className="label">
-          Requests that succeed
-          <span className="legend">
-            <span><i style={{ background: 'var(--text-3)' }} />offered</span>
-            <span><i style={{ background: 'var(--ok)' }} />succeeded</span>
-            <span><i style={{ background: 'var(--bad)' }} />failed</span>
-          </span>
-        </div>
-        <div className="headline">
-          <span className="big" style={{ color: goodRatio === undefined ? undefined : tone(goodRatio > 0.97, goodRatio > 0.6) }}>
-            {fmtPct(goodRatio)}
-          </span>
-          <span className="unit">of {fmtRate(data.offered[last])} req/s</span>
-        </div>
-        <TimeChart
-          x={data.x}
-          domain={domain}
-          events={events}
-          bands={bands}
-          series={[
-            { key: 'offered', label: 'offered', values: data.offered, color: 'var(--text-3)', dashed: true, width: 1 },
-            { key: 'goodput', label: 'succeeded', values: data.goodput, color: 'var(--ok)', area: true },
-            { key: 'failed', label: 'failed', values: data.failed, color: 'var(--bad)' },
-          ]}
-        />
+    <div className="timeline" id="dock">
+      <div className="metric-options" role="group" aria-label="Live chart metric">
+        {metrics.map((m, i) => <button key={m.name} className="metric-option" aria-pressed={metric === i} onClick={() => setMetric(i)}>
+          <span className="label">{m.name}<span aria-hidden>{metric === i ? '↘' : '↗'}</span></span>
+          <span className="metric-value" style={{ color: m.color }}>{m.value}</span>
+          <span className="hint">{m.unit}</span>
+        </button>)}
       </div>
-      <div className="chart">
-        <div className="label">
-          Retry amplification
-          <span className="legend">
-            <span><i style={{ background: 'var(--text-3)' }} />calls</span>
-            <span><i style={{ background: 'var(--retry)' }} />attempts</span>
-          </span>
+      <div className="chart-focus" role="img" aria-label={`${metrics[metric].name}, last 90 seconds. Current value: ${metrics[metric].value}`}>
+        <div className="legend">
+          {series[metric].map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.label}</span>)}
+          <span className="chart-window">Last 90 seconds · live</span>
         </div>
-        <div className="headline">
-          <span className="big" style={{ color: amp === undefined ? undefined : tone(amp < 1.15, amp < 1.6) }}>
-            ×{amp === undefined ? '–' : amp.toFixed(2)}
-          </span>
-          <span className="unit">attempts per call{data.denied[last] > 0 ? ` · ${fmtRate(data.denied[last])}/s held back by budget` : ''}</span>
-        </div>
-        <TimeChart
-          x={data.x}
-          domain={domain}
-          events={events}
-          bands={bands}
-          series={[
-            { key: 'requests', label: 'calls', values: data.requests, color: 'var(--text-3)', width: 1.2 },
-            { key: 'attempts', label: 'attempts', values: data.attempts, color: 'var(--retry)', area: true },
-          ]}
-        />
-      </div>
-      <div className="chart">
-        <div className="label">
-          Backlog
-          {waste > 0.05 && <span className="chip waste">{fmtPct(waste)} of work wasted</span>}
-        </div>
-        <div className="headline">
-          <span className="big" style={{ color: (data.queued[last] ?? 0) > 20 ? 'var(--retry)' : undefined }}>
-            {fmtCount(data.queued[last])}
-          </span>
-          <span className="unit">requests queued</span>
-        </div>
-        <TimeChart
-          x={data.x}
-          domain={domain}
-          events={events}
-          bands={bands}
-          log
-          format={fmtCount}
-          series={[{ key: 'queued', label: 'queued', values: data.queued, color: 'var(--retry)', area: true }]}
-        />
+        <TimeChart x={data.x} domain={domain} events={events} bands={bands} series={series[metric]} log={metric === 2} format={metric === 2 ? fmtCount : fmtRate} />
+        <div className="chart-axis"><span>90s ago</span><span>60s</span><span>30s</span><span>Now</span></div>
       </div>
     </div>
   )

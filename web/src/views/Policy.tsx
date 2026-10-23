@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { latest, useStore } from '../store'
 import type { ClientPolicy, ServiceConfig } from '../types'
@@ -9,7 +9,8 @@ const CODES = ['UNAVAILABLE', 'DEADLINE_EXCEEDED', 'RESOURCE_EXHAUSTED', 'INTERN
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x))
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
-function NumCell({ value, declared, onChange, min = 0, max = 100000, placeholder }: {
+function NumCell({ value, declared, onChange, min = 0, max = 100000, placeholder, label }: {
+  label: string
   value: number | undefined
   declared: number | undefined
   onChange: (v: number | undefined) => void
@@ -20,6 +21,7 @@ function NumCell({ value, declared, onChange, min = 0, max = 100000, placeholder
   return (
     <input
       className={`cell-input${value !== declared ? ' changed' : ''}`}
+      aria-label={label}
       type="number"
       min={min}
       max={max}
@@ -43,11 +45,15 @@ export function PolicyView() {
   const [draft, setDraft] = useState<Record<string, ServiceConfig>>({})
   const [busy, setBusy] = useState(false)
 
+  const previous = useRef<Record<string, ServiceConfig>>({})
+
   // Keep the draft in step with live config for services not being edited.
   useEffect(() => {
+    const baseline = previous.current
+    previous.current = Object.fromEntries(services.map((s) => [s.name, s.effective]))
     setDraft((d) => {
       const next = { ...d }
-      for (const s of services) if (!d[s.name] || same(d[s.name], s.effective)) next[s.name] = clone(s.effective)
+      for (const s of services) if (!d[s.name] || same(d[s.name], baseline[s.name])) next[s.name] = clone(s.effective)
       return next
     })
   }, [services])
@@ -89,21 +95,17 @@ export function PolicyView() {
   const edges = services
     .flatMap((s) => Object.keys(draft[s.name]?.clients ?? {}).map((peer) => ({ from: s.name, to: peer })))
     .sort((a, b) => (a.from === state?.entry ? -1 : b.from === state?.entry ? 1 : a.from.localeCompare(b.from) || a.to.localeCompare(b.to)))
-  const servers = services.filter((s) => s.name !== state?.entry)
+  const servers = services.filter((s) => !state?.load || s.name !== state.entry)
   const paths = [...(report?.paths ?? [])].sort((a, b) => b.sustained - a.sustained)
 
   return (
     <div className="page">
       <div className="page-inner">
-        <div className="row" style={{ alignItems: 'flex-end', marginBottom: 20 }}>
-          <div>
-            <h1>Policy</h1>
-            <p className="lede" style={{ margin: 0 }}>
-              What every service enforces right now. Changes reach the agents over their control-plane sessions and apply
-              to the next request; nothing restarts. Values that differ from what a service declares are marked.
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+        <div className="page-header">
+          <div><div className="eyebrow">Policy / Change the outcome</div><h1>Decide when<br />to stop trying.</h1></div>
+          <p className="lede">Tune the timeouts, retries, and queues your services enforce. Changes apply to the next request. Amber values differ from the declared policy.</p>
+        </div>
+        <div className="policy-actions">
             {pending.length > 0 && (
               <button className="btn ghost" onClick={() => setDraft(clone(effective))}>
                 Discard
@@ -112,10 +114,9 @@ export function PolicyView() {
             <button className="btn primary" disabled={!pending.length || busy} onClick={apply}>
               {pending.length ? `Apply to ${pending.join(', ')}` : 'No changes'}
             </button>
-          </div>
         </div>
 
-        <section className="card" style={{ marginBottom: 20, overflowX: 'auto' }}>
+        <section className="policy-table-wrap" tabIndex={0} role="region" aria-label="Client policies">
           <div className="section" style={{ paddingBottom: 0 }}>
             <h2>Calls</h2>
             <div className="hint">Per-attempt timeout, attempts including the first, base backoff (doubling, full jitter), retry budget as a share of requests.</div>
@@ -148,13 +149,13 @@ export function PolicyView() {
                       {isUsers && <div className="hint">how people behave</div>}
                     </td>
                     <td>
-                      <NumCell value={p.timeoutMs} declared={d?.timeoutMs} onChange={(v) => editClient(from, to, (x) => (x.timeoutMs = v ?? 0))} />
+                      <NumCell label={`${from} to ${to} timeout in milliseconds`} value={p.timeoutMs} declared={d?.timeoutMs} onChange={(v) => editClient(from, to, (x) => (x.timeoutMs = v ?? 0))} />
                     </td>
                     <td>
-                      <NumCell value={p.maxAttempts} declared={d?.maxAttempts} min={1} max={10} onChange={(v) => editClient(from, to, (x) => (x.maxAttempts = Math.max(1, v ?? 1)))} />
+                      <NumCell label={`${from} to ${to} maximum attempts`} value={p.maxAttempts} declared={d?.maxAttempts} min={1} max={10} onChange={(v) => editClient(from, to, (x) => (x.maxAttempts = Math.max(1, v ?? 1)))} />
                     </td>
                     <td>
-                      <NumCell value={p.backoffMs} declared={d?.backoffMs} onChange={(v) => editClient(from, to, (x) => (x.backoffMs = v ?? 0))} />
+                      <NumCell label={`${from} to ${to} backoff in milliseconds`} value={p.backoffMs} declared={d?.backoffMs} onChange={(v) => editClient(from, to, (x) => (x.backoffMs = v ?? 0))} />
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 260 }}>
@@ -163,6 +164,7 @@ export function PolicyView() {
                           return (
                             <button
                               key={c}
+                              aria-pressed={on}
                               className={`chip${on ? ' fault' : ''}`}
                               style={{ cursor: 'pointer', background: on ? undefined : 'transparent' }}
                               onClick={() => editClient(from, to, (x) => (x.retryOn = on ? (x.retryOn ?? []).filter((y) => y !== c) : [...(x.retryOn ?? []), c]))}
@@ -175,6 +177,8 @@ export function PolicyView() {
                     </td>
                     <td>
                       <NumCell
+                        label={`${from} to ${to} retry budget percent`}
+                        max={100}
                         value={p.budget ? Math.round(p.budget.ratio * 100) : undefined}
                         declared={d?.budget ? Math.round(d.budget.ratio * 100) : undefined}
                         placeholder="none"
@@ -183,7 +187,7 @@ export function PolicyView() {
                     </td>
                     <td>
                       <span className="row" style={{ justifyContent: 'flex-start', gap: 8 }}>
-                        <Switch on={p.propagateDeadline} label="Propagate deadline" onChange={(v) => editClient(from, to, (x) => (x.propagateDeadline = v))} />
+                        <Switch on={p.propagateDeadline} label={`${from} to ${to} propagate deadline`} onChange={(v) => editClient(from, to, (x) => (x.propagateDeadline = v))} />
                         <span className="hint">{p.propagateDeadline ? 'inherits' : 'drops'}</span>
                       </span>
                     </td>
@@ -195,6 +199,7 @@ export function PolicyView() {
                           return (
                             <button
                               key={m}
+                              aria-pressed={on}
                               className={`chip${on ? ' ok' : ' bad'}`}
                               style={{ cursor: 'pointer' }}
                               title={on ? 'Never retried' : 'Not idempotent, and retried'}
@@ -217,8 +222,8 @@ export function PolicyView() {
           </table>
         </section>
 
-        <div className="grid-2" style={{ marginBottom: 20, alignItems: 'start' }}>
-          <section className="card">
+        <div className="grid-2 policy-pair">
+          <section className="policy-table-wrap" tabIndex={0}>
             <div className="section" style={{ paddingBottom: 0 }}>
               <h2>Servers</h2>
               <div className="hint">A worker is held for the whole request, downstream calls included.</div>
@@ -242,16 +247,16 @@ export function PolicyView() {
                     <tr key={s.name} className={same(c, d) ? '' : 'changed'}>
                       <td>{s.name}</td>
                       <td>
-                        <NumCell value={c.workers || undefined} declared={d.workers || undefined} placeholder="∞" onChange={(v) => edit(s.name, (x) => (x.server.workers = v ?? 0))} />
+                        <NumCell label={`${s.name} workers`} value={c.workers || undefined} declared={d.workers || undefined} placeholder="∞" onChange={(v) => edit(s.name, (x) => (x.server.workers = v ?? 0))} />
                       </td>
                       <td>
-                        <NumCell value={c.queueLimit || undefined} declared={d.queueLimit || undefined} placeholder="∞" onChange={(v) => edit(s.name, (x) => (x.server.queueLimit = v ?? 0))} />
+                        <NumCell label={`${s.name} queue limit`} value={c.queueLimit || undefined} declared={d.queueLimit || undefined} placeholder="∞" onChange={(v) => edit(s.name, (x) => (x.server.queueLimit = v ?? 0))} />
                       </td>
                       <td>
-                        <Switch on={c.shedExpired} label="Shed expired work" onChange={(v) => edit(s.name, (x) => (x.server.shedExpired = v))} />
+                        <Switch on={c.shedExpired} label={`${s.name} shed expired work`} onChange={(v) => edit(s.name, (x) => (x.server.shedExpired = v))} />
                       </td>
                       <td>
-                        <NumCell value={c.workMs} declared={d.workMs} onChange={(v) => edit(s.name, (x) => (x.server.workMs = v))} />
+                        <NumCell label={`${s.name} work in milliseconds`} value={c.workMs} declared={d.workMs} onChange={(v) => edit(s.name, (x) => (x.server.workMs = v))} />
                       </td>
                     </tr>
                   )
@@ -260,7 +265,7 @@ export function PolicyView() {
             </table>
           </section>
 
-          <section className="card">
+          <section className="policy-table-wrap" tabIndex={0}>
             <div className="section" style={{ paddingBottom: 0 }}>
               <h2>Every path from {state?.entry}</h2>
               <div className="hint">Attempts one request can become at the end of each path when every attempt fails, sustained through an outage.</div>

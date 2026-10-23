@@ -40,6 +40,11 @@ how long it takes. Timing and capacity vary by machine.
 | **Predict** | Compare a slowdown under the current and mitigated policies. Sweep load and incident duration in a stability map, or ramp traffic up and down. |
 | **Policy** | Edit per-hop timeouts, attempts, backoff, retry budgets, deadline propagation, worker counts, and queue limits. Export a policy for CI. |
 
+The live workspace moves from request metrics and the call graph to fault
+experiments and policy findings. Select a service to inspect its queues and
+deadlines, or open Traces for individual request waterfalls. The animated
+constellation can be paused and respects reduced-motion preferences.
+
 The reference policy is intentionally unsafe so the incident can be reproduced.
 `examples/hardened.policy.json` provides a separate configuration with bounded
 queues, propagated deadlines, and retries restricted to safe operations.

@@ -86,7 +86,7 @@ function useStatus(): Status | null {
   }, [ticks, events, faults])
 }
 
-function StatusCard() {
+export function StatusCard() {
   const status = useStatus()
   if (!status) return null
   const color = { ok: 'var(--ok)', warn: 'var(--retry)', bad: 'var(--bad)' }[status.tone]
@@ -134,13 +134,14 @@ function FindingItem({ f, open, onToggle }: { f: Finding; open: boolean; onToggl
     <div
       className="finding"
       data-sev={f.severity}
-      onClick={onToggle}
       onMouseEnter={() => highlight(edges)}
       onMouseLeave={() => highlight([])}
-      aria-expanded={open}
     >
-      <div className="f-sev">{f.severity}</div>
-      <div className="f-title">{f.title}</div>
+      <button className="finding-trigger" onClick={onToggle} aria-expanded={open}>
+        <span className="f-sev">{f.severity}</span>
+        <span className="f-title">{f.title}</span>
+        <span className="f-expand" aria-hidden>{open ? '−' : '+'}</span>
+      </button>
       {open && (
         <>
           <div className="f-detail">{f.detail}</div>
@@ -168,9 +169,13 @@ export function FindingsRail() {
   const [open, setOpen] = useState<string | null>(null)
   const counts = report?.counts ?? {}
   return (
-    <div className="rail right" id="rail-right">
-      <StatusCard />
-      <div className="panel scroll grow">
+    <section className="chapter findings-layout" id="findings" aria-labelledby="findings-title">
+      <div className="findings-intro">
+        <div className="eyebrow">03 / Understand</div>
+        <h2 id="findings-title">The fault is<br />only the start.</h2>
+        <p>Retries multiply. Deadlines drift. Queues keep work that nobody needs. Find the policies that let a small failure become a lasting one.</p>
+      </div>
+      <div className="findings-list">
         <div className="section" style={{ paddingBottom: 6 }}>
           <div className="label" style={{ marginBottom: 6 }}>
             Findings
@@ -184,13 +189,13 @@ export function FindingsRail() {
               )}
             </span>
           </div>
-          <div className="hint">From the live policy and observed traffic. Hover to see where; click for the numbers.</div>
+          <div className="hint">From the live policy and observed traffic. Open a finding to inspect the evidence and compare a fix.</div>
         </div>
         {report?.findings.length === 0 && <div className="empty">Nothing to report. Every path is bounded.</div>}
         {report?.findings.map((f) => (
           <FindingItem key={f.id} f={f} open={open === f.id} onToggle={() => setOpen(open === f.id ? null : f.id)} />
         ))}
       </div>
-    </div>
+    </section>
   )
 }

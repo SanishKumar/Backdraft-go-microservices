@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ControlEvent, Particle, Report, State, Tick } from './types'
+import type { ControlEvent, Report, State, Tick } from './types'
 
 // About two minutes of history at four ticks a second.
 const HISTORY = 480
@@ -37,21 +37,6 @@ export const useStore = create<Store>((set) => ({
   setTracesOpen: (tracesOpen) => set({ tracesOpen }),
   highlight: (hoveredEdges) => set({ hoveredEdges }),
 }))
-
-// Particles bypass React: the 3D loop drains this queue every frame.
-type Listener = (ps: Particle[], scale: number) => void
-const listeners = new Set<Listener>()
-export const particleBus = {
-  subscribe(fn: Listener) {
-    listeners.add(fn)
-    return () => {
-      listeners.delete(fn)
-    }
-  },
-  emit(ps: Particle[], scale: number) {
-    for (const fn of listeners) fn(ps, scale)
-  },
-}
 
 type Message =
   | { type: 'hello'; state: State; findings: Report; history?: Tick[] }
@@ -92,7 +77,6 @@ export function connect(): () => void {
             ticks: next,
             events: m.events?.length ? [...events, ...m.events].slice(-200) : events,
           })
-          if (particles?.length && !document.hidden) particleBus.emit(particles, m.tick.scale)
           break
         }
         case 'state':

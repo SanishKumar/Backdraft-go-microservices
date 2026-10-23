@@ -131,7 +131,7 @@ export function useDemo() {
       at(1, {
         step: healed ? 'Recovered' : 'Still recovering',
         text: healed
-          ? `Back to full health ${took} seconds after the change, with the incident long over. The Predict tab maps every load and incident size this policy survives, before production finds out.`
+          ? `Back to full health ${took} seconds after the change, with the incident long over. Open Predict to compare recovery across a range of loads and slowdowns.`
           : 'Still draining. Try switching on "Shed expired work" as well, then open the Predict tab to see why it helps.',
         final: true,
       })
@@ -162,12 +162,12 @@ export function DemoCaption({ caption, progress, onStop }: { caption: Caption; p
     return () => window.clearInterval(id)
   }, [caption])
   return (
-    <div className="caption panel" role="status" aria-live="polite">
+    <div className="caption" id="incident-progress">
       <div className="step">
         <span>{caption.step}</span>
         {caption.live && <span style={{ color: 'var(--text-2)', letterSpacing: 0, textTransform: 'none' }}>{caption.live()}</span>}
       </div>
-      <div>{caption.text}</div>
+      <div role="status" aria-live="polite">{caption.text}</div>
       <div className="demo-bar">
         <div style={{ width: `${progress * 100}%` }} />
       </div>

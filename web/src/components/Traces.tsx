@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { useStore } from '../store'
 import type { SpanView, TraceSummary } from '../types'
@@ -94,32 +94,42 @@ export function TracesDrawer() {
   const [list, setList] = useState<TraceSummary[]>([])
   const [sel, setSel] = useState<string | null>(null)
   const [spans, setSpans] = useState<SpanView[] | null>(null)
+  const [error, setError] = useState('')
+  const dialog = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
     if (!open) return
-    const load = () => api.traces(filter).then(setList).catch(() => {})
+    dialog.current?.showModal()
+    const overflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = overflow }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    const load = () => api.traces(filter).then((next) => {
+      if (active) { setList(next); setError('') }
+    }).catch((e) => { if (active) setError((e as Error).message) })
     load()
     const id = window.setInterval(load, 3000)
-    return () => window.clearInterval(id)
+    return () => { active = false; window.clearInterval(id) }
   }, [open, filter])
 
   useEffect(() => {
     if (!sel) return setSpans(null)
+    let active = true
+    setSpans(null)
     api
       .trace(sel)
-      .then((t) => setSpans(t.spans))
-      .catch(() => setSpans([]))
+      .then((t) => { if (active) setSpans(t.spans) })
+      .catch(() => { if (active) setSpans([]) })
+    return () => { active = false }
   }, [sel])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [setOpen])
 
   if (!open) return null
   return (
-    <div className="drawer panel" role="dialog" aria-label="Traces">
+    <dialog ref={dialog} className="drawer" aria-label="Traces" onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>
       <div className="trace-list">
         <div className="section" style={{ position: 'sticky', top: 0, background: 'var(--panel-solid)', zIndex: 1 }}>
           <div className="label">
@@ -137,9 +147,10 @@ export function TracesDrawer() {
             </button>
           </div>
         </div>
-        {list.length === 0 && <div className="empty">No traces yet.</div>}
+        {error && <p className="hint" role="alert">Could not load traces: {error}</p>}
+        {!error && list.length === 0 && <div className="empty">No traces yet.</div>}
         {list.map((t) => (
-          <div key={t.id} className="trace-row" aria-selected={t.id === sel} onClick={() => setSel(t.id)}>
+          <button key={t.id} className="trace-row" aria-pressed={t.id === sel} onClick={() => setSel(t.id)}>
             <span style={{ fontWeight: 500 }}>
               <span className="dot" style={{ display: 'inline-block', marginRight: 7, background: t.ok ? 'var(--ok)' : 'var(--bad)' }} />
               {t.op || 'internal'}
@@ -152,7 +163,7 @@ export function TracesDrawer() {
               {t.late > 0 && <span style={{ color: 'var(--waste)' }}> · {t.late} late</span>}
             </span>
             <span className="hint">{ago(t.start)}</span>
-          </div>
+          </button>
         ))}
       </div>
       {spans ? (
@@ -163,6 +174,6 @@ export function TracesDrawer() {
           out, and for bars that end to the right of their deadline line.
         </div>
       )}
-    </div>
+    </dialog>
   )
 }

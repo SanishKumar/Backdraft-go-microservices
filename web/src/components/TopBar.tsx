@@ -1,22 +1,19 @@
+import { useId } from 'react'
 import { useStore, type View } from '../store'
-import { fmtRate } from '../format'
 
 const TABS: { id: View; label: string }[] = [
-  { id: 'live', label: 'Live' },
+  { id: 'live', label: 'Live system' },
   { id: 'predict', label: 'Predict' },
   { id: 'policy', label: 'Policy' },
 ]
 
 export function Mark() {
+  const id = useId()
   return (
-    <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden>
-      <path
-        d="M9 23c0-5 4-6.5 4-11 3 2 4 4.5 3.5 7 1.5-.8 2.3-2.4 2.5-4 2.6 2.6 4 5.3 4 8a7 7 0 0 1-14 0Z"
-        fill="none"
-        stroke="var(--ember)"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
+    <svg className="brand-mark" viewBox="0 0 32 36" aria-hidden="true">
+      <defs><linearGradient id={id} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#8052ff" /><stop offset="1" stopColor="#15846e" /></linearGradient></defs>
+      <path d="M17 1 1 28l16-7 14 14L17 1Z" fill={`url(#${id})`} />
+      <path d="m17 1 0 20L1 28" fill="none" stroke="#ad8fff" strokeWidth=".75" />
     </svg>
   )
 }
@@ -25,42 +22,18 @@ export function TopBar() {
   const view = useStore((s) => s.view)
   const setView = useStore((s) => s.setView)
   const connected = useStore((s) => s.connected)
-  const capacity = useStore((s) => s.state?.capacity)
-  const bottleneck = useStore((s) => s.state?.bottleneck)
   const setTracesOpen = useStore((s) => s.setTracesOpen)
   return (
     <header className="topbar">
-      <div className="brand">
-        <Mark />
-        <span className="brand-name">backdraft</span>
-        <span className="brand-tag">finds the retry storm before production does</span>
-      </div>
-      <nav className="tabs" role="tablist" aria-label="Views">
-        {TABS.map((t) => (
-          <button key={t.id} className="tab" role="tab" aria-selected={view === t.id} onClick={() => setView(t.id)}>
-            {t.label}
-          </button>
-        ))}
+      <button className="brand" onClick={() => { setView('live'); window.scrollTo({ top: 0, behavior: 'smooth' }) }} aria-label="Backdraft home">
+        <Mark /><span className="brand-name">backdraft</span>
+      </button>
+      <nav className="tabs" aria-label="Workspace views">
+        {TABS.map((t) => <button key={t.id} className="tab" aria-current={view === t.id ? 'page' : undefined} onClick={() => setView(t.id)}>{t.label}</button>)}
       </nav>
       <div className="top-right">
-        {capacity ? (
-          <span className="num" title="Healthy capacity estimated from the calibrated model (utilization law)">
-            capacity ≈ {fmtRate(capacity)} req/s{bottleneck ? ` · ${bottleneck}-bound` : ''}
-          </span>
-        ) : null}
-        <button
-          className="btn small"
-          onClick={() => {
-            setView('live')
-            setTracesOpen(true)
-          }}
-        >
-          Traces
-        </button>
-        <span className="conn">
-          <span className={`dot ${connected ? 'live' : 'bad'}`} />
-          {connected ? 'live' : 'reconnecting'}
-        </span>
+        <span className="conn" role="status"><span className={`dot ${connected ? 'live' : 'bad'}`} />{connected ? 'Connected' : 'Reconnecting'}</span>
+        <button className="btn ghost trace-link" onClick={() => setTracesOpen(true)}>Traces <span aria-hidden>↗</span></button>
       </div>
     </header>
   )

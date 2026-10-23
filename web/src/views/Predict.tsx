@@ -96,7 +96,8 @@ function ResultCard({ v, scenario, warmS }: { v: VariantResult; scenario: Scenar
   )
 }
 
-function ScenarioRunner({ scenario, setScenario, targets, run, results, busy }: {
+function ScenarioRunner({ scenario, resultScenario, setScenario, targets, run, results, busy }: {
+  resultScenario: Scenario
   scenario: Scenario
   setScenario: (s: Scenario) => void
   targets: string[]
@@ -113,6 +114,8 @@ function ScenarioRunner({ scenario, setScenario, targets, run, results, busy }: 
           className="cell-input"
           style={{ width: 84 }}
           type="number"
+          aria-label={k === 'latencyMs' ? 'Simulated extra latency in milliseconds' : k === 'faultS' ? 'Simulated slowdown duration in seconds' : 'Simulated request rate'}
+          required
           min={min}
           max={max}
           step={step}
@@ -124,32 +127,32 @@ function ScenarioRunner({ scenario, setScenario, targets, run, results, busy }: 
     </label>
   )
   return (
-    <section style={{ marginBottom: 36 }}>
+    <section className="page-section">
       <div className="card">
-        <div className="scenario">
-          <label className="field">
+        <form className="scenario" onSubmit={(e) => { e.preventDefault(); run() }}>
+          <div className="field" role="group" aria-label="Service to simulate">
             <span className="field-label">Slow down</span>
             <div className="seg">
               {targets.map((t) => (
-                <button key={t} aria-pressed={t === scenario.service} onClick={() => setScenario({ ...scenario, service: t })} style={{ padding: '6px 12px' }}>
+                <button key={t} type="button" aria-pressed={t === scenario.service} onClick={() => setScenario({ ...scenario, service: t })} style={{ padding: '6px 12px' }}>
                   {t}
                 </button>
               ))}
             </div>
-          </label>
-          {num('latencyMs', 'by', 'ms', 10, 5000, 50)}
+          </div>
+          {num('latencyMs', 'by', 'ms', 10, 5000, 1)}
           {num('faultS', 'for', 'seconds', 1, 120, 1)}
-          {num('rps', 'at a load of', capacity ? `req/s (${fmtPct(scenario.rps / capacity)} of capacity)` : 'req/s', 1, 20000, 10)}
-          <button className="btn primary" onClick={run} disabled={busy} style={{ marginLeft: 'auto' }}>
+          {num('rps', 'at a load of', capacity ? `req/s (${fmtPct(scenario.rps / capacity)} of capacity)` : 'req/s', 1, 20000, 1)}
+          <button className="btn primary" type="submit" disabled={busy} style={{ marginLeft: 'auto' }}>
             {busy ? <span className="spinner" /> : null}
             Simulate
           </button>
-        </div>
+        </form>
       </div>
       {results && (
-        <div className="grid-2" style={{ marginTop: 16, gridTemplateColumns: `repeat(${Math.min(results.length, 3)}, 1fr)` }}>
+        <div className="grid-2 result-grid">
           {results.map((v) => (
-            <ResultCard key={v.name} v={v} scenario={scenario} warmS={8} />
+            <ResultCard key={v.name} v={v} scenario={resultScenario} warmS={8} />
           ))}
         </div>
       )}
@@ -337,6 +340,7 @@ export function PredictView() {
     faultS: 8,
     rps: Math.round(state?.load?.rps || 200),
   })
+  const [resultScenario, setResultScenario] = useState(scenario)
   const [results, setResults] = useState<VariantResult[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [maps, setMaps] = useState<[MapResponse | null, MapResponse | null]>([null, null])
@@ -352,6 +356,7 @@ export function PredictView() {
       setBusy(true)
       try {
         const res = await api.simRun({ ...s, warmS: 8, observeS: 30, variants })
+        setResultScenario({ ...s })
         setResults(res.variants)
       } catch (e) {
         toast((e as Error).message, true)
@@ -387,7 +392,7 @@ export function PredictView() {
     const s = { ...scenario, rps: c.load, faultS: c.duration, latencyMs: maps[0]?.latencyMs ?? scenario.latencyMs, service: maps[0]?.service ?? scenario.service }
     setScenario(s)
     run(s)
-    document.querySelector('.page')?.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const runHyst = async () => {
@@ -408,27 +413,24 @@ export function PredictView() {
   return (
     <div className="page">
       <div className="page-inner">
-        <h1>What happens if…</h1>
-        <p className="lede">
-          Backdraft replays this system in a discrete-event simulator calibrated from its live traffic: the observed
-          distribution of each service's own work, the calls each operation actually makes, the real request mix, and the
-          policies in force right now. A minute of traffic simulates in milliseconds, so it can answer what a dashboard
-          cannot: if this slowdown happens, does the system come back when it ends?
-        </p>
+        <div className="page-header">
+          <div><div className="eyebrow">Predict / Before it happens</div><h1>Will it<br />recover?</h1></div>
+          <p className="lede">Replay a slowdown against a model calibrated from live traffic. Compare your current policy with mitigations before changing the running system.</p>
+        </div>
 
-        <ScenarioRunner scenario={scenario} setScenario={setScenario} targets={targets} run={() => run()} results={results} busy={busy} />
+        <ScenarioRunner scenario={scenario} resultScenario={resultScenario} setScenario={setScenario} targets={targets} run={() => run()} results={results} busy={busy || mapBusy || hystBusy} />
 
-        <section style={{ marginBottom: 36 }}>
+        <section className="page-section">
           <div className="row" style={{ marginBottom: 12, alignItems: 'flex-end' }}>
             <div>
-              <h1 style={{ fontSize: 19 }}>Stability map</h1>
+              <h2>Find the tipping point.</h2>
               <p className="lede" style={{ margin: 0 }}>
                 Each cell is a full simulation: a {maps[0]?.latencyMs ?? scenario.latencyMs}ms slowdown of{' '}
                 {maps[0]?.service ?? scenario.service}, at a given load, for a given time. Red cells remain overloaded
                 through the model's observation window.
               </p>
             </div>
-            <button className="btn" disabled={mapBusy || busy} onClick={() => runMaps(scenario.service, scenario.latencyMs)}>
+            <button className="btn" disabled={mapBusy || busy || hystBusy} onClick={() => runMaps(scenario.service, scenario.latencyMs)}>
               Map {scenario.service} +{scenario.latencyMs}ms
             </button>
           </div>
@@ -444,17 +446,17 @@ export function PredictView() {
           </div>
         </section>
 
-        <section style={{ marginBottom: 36 }}>
+        <section className="page-section">
           <div className="row" style={{ marginBottom: 12, alignItems: 'flex-end' }}>
             <div>
-              <h1 style={{ fontSize: 19 }}>Hysteresis</h1>
+              <h2>The way back is different.</h2>
               <p className="lede" style={{ margin: 0 }}>
                 Load ramps past capacity and back down, with no fault at all. A healthy system retraces its path. One that
                 retries without limit comes back down a different, lower path: at the same load, it is healthy if it got
                 there from below and down if it got there from above.
               </p>
             </div>
-            <button className="btn" onClick={runHyst} disabled={hystBusy}>
+            <button className="btn" onClick={runHyst} disabled={hystBusy || busy || mapBusy}>
               {hystBusy ? <span className="spinner" /> : null}
               Run the sweep
             </button>
@@ -468,19 +470,19 @@ export function PredictView() {
           )}
         </section>
 
-        <section>
-          <h1 style={{ fontSize: 19 }}>What the model knows</h1>
-          <div className="card section" style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'center' }}>
+        <section className="page-section">
+          <h2>What the model knows.</h2>
+          <div className="section model-stats">
             <div>
-              <div className="big num" style={{ fontSize: 20 }}>{fmtCount(selfTotal)}</div>
+              <div className="big num">{fmtCount(selfTotal)}</div>
               <div className="hint">service-time samples</div>
             </div>
             <div>
-              <div className="big num" style={{ fontSize: 20 }}>{fmtCount(shapeTotal)}</div>
+              <div className="big num">{fmtCount(shapeTotal)}</div>
               <div className="hint">observed call shapes</div>
             </div>
             <div>
-              <div className="big num" style={{ fontSize: 20 }}>{cal?.opsObserved ? 'live' : 'declared'}</div>
+              <div className="big num">{cal?.opsObserved ? 'live' : 'declared'}</div>
               <div className="hint">request mix</div>
             </div>
             <div className="hint" style={{ maxWidth: 520 }}>

@@ -16,11 +16,11 @@ export function Inspector() {
   const wasted = st && st.arrivals > 0 ? st.late / st.arrivals : 0
 
   return (
-    <div className="inspector panel" style={{ top: 'var(--gap)', left: 'calc(var(--rail-left) + 2 * var(--gap))' }}>
+    <section className="inspector" aria-label={`${name} service details`}>
       <div className="section">
         <div className="label" style={{ marginBottom: 8 }}>
-          <span style={{ color: 'var(--text)', fontSize: 13, letterSpacing: 0, textTransform: 'none', fontWeight: 600 }}>{name}</span>
-          <button className="btn ghost small" onClick={() => select(null)} aria-label="Close">
+          <h3>{name}</h3>
+          <button className="btn ghost small" onClick={() => select(null)} aria-label="Close service details">
             ✕
           </button>
         </div>
@@ -88,6 +88,6 @@ export function Inspector() {
           Edit policy
         </button>
       </div>
-    </div>
+    </section>
   )
 }
