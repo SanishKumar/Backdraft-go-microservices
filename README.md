@@ -5,7 +5,7 @@ Backdraft helps investigate that failure mode: inspect retries across a gRPC
 call graph, reproduce an incident, and compare policy changes before applying
 them.
 
-[![CI](https://github.com/SanishKumar/go-microservices/actions/workflows/ci.yml/badge.svg)](https://github.com/SanishKumar/go-microservices/actions/workflows/ci.yml)
+[![CI](https://github.com/SanishKumar/Backdraft-go-microservices/actions/workflows/ci.yml/badge.svg)](https://github.com/SanishKumar/Backdraft-go-microservices/actions/workflows/ci.yml)
 
 ![Backdraft live workspace](docs/images/backdraft.png)
 
@@ -14,8 +14,8 @@ them.
 Requires Go 1.24.1+ and Node.js 22.12+.
 
 ```sh
-git clone https://github.com/SanishKumar/go-microservices.git
-cd go-microservices
+git clone https://github.com/SanishKumar/Backdraft-go-microservices.git
+cd Backdraft-go-microservices
 cd web
 npm ci
 npm run build
