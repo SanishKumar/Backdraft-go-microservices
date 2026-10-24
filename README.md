@@ -145,6 +145,10 @@ npm run build
 
 `python scripts/smoke.py` checks a running lab. For Compose, add
 `--gateway http://127.0.0.1:8000/graphql --wait 180`.
+The smoke check pauses traffic, clears faults and policy edits, and drains
+work left by earlier experiments before testing checkout. Avoid changing
+controls while it runs. On success it restores the original traffic settings
+with the reference policy; on failure it leaves traffic paused for diagnosis.
 [CI](.github/workflows/ci.yml) also runs Linux race detection and the
 Compose smoke check against real databases.
 

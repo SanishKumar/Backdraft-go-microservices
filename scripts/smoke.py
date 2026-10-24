@@ -2,18 +2,58 @@
 
 import argparse
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
 
 
+def wait_for_idle(request, api, service_names, timeout):
+    """Require fresh, quiet telemetry before sending non-idempotent writes."""
+    deadline = time.monotonic() + timeout
+    last_tick = None
+    idle_samples = 0
+    last_error = "waiting for live telemetry"
+    while time.monotonic() < deadline:
+        try:
+            state = request(api + "/api/state")
+            live = request(api + "/api/live")
+            connected = {s["name"] for s in state["services"] if s["instances"] > 0}
+            missing = service_names - (connected & live["services"].keys())
+            queued = sum(s["queued"] for s in live["services"].values())
+            active = sum(s["inFlight"] for s in live["services"].values())
+            attempts = sum(e["attempts"] for e in live["edges"].values())
+            faults = [name for name, enabled in state["faults"].items() if enabled]
+            if missing or faults or queued or active or attempts or live["entry"]["offered"]:
+                idle_samples = 0
+                last_error = f"{queued} queued, {active} in flight, {attempts:g} attempts/s"
+                if missing:
+                    last_error += f"; missing agents: {', '.join(sorted(missing))}"
+                if faults:
+                    last_error += f"; active faults: {', '.join(sorted(faults))}"
+            elif live["t"] != last_tick:
+                idle_samples += 1
+                last_error = f"waiting for stable idle telemetry ({idle_samples}/3 samples)"
+                if idle_samples == 3:
+                    return
+            last_tick = live["t"]
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            idle_samples = 0
+            last_error = str(error)
+        time.sleep(1)
+    raise RuntimeError(f"lab did not drain within {timeout:g}s: {last_error}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api", default="http://127.0.0.1:7070")
     parser.add_argument("--gateway", default="http://127.0.0.1:8080/graphql")
-    parser.add_argument("--wait", type=float, default=60)
+    parser.add_argument("--wait", type=float, default=60,
+                        help="seconds allowed for startup and each recovery phase (default: 60)")
     args = parser.parse_args()
+    if args.wait <= 0:
+        parser.error("--wait must be positive")
 
     def request(url, body=None, method=None, headers=None):
         data = None if body is None else json.dumps(body).encode()
@@ -52,10 +92,24 @@ def main():
             raise RuntimeError(f"GraphQL errors: {result['errors']}")
         return result["data"]
 
-    # Pause generated traffic while checking public API data correctness.
+    # An earlier experiment can leave expired work queued long after its fault
+    # ends. Pausing arrivals alone does not make the reference policy healthy.
     before = request(args.api + "/api/load")
-    request(args.api + "/api/load", {"rps": 0}, "PUT")
+    passed = False
     try:
+        request(args.api + "/api/load", {**before, "rps": 0}, "PUT")
+        print("Preparing the lab: pausing traffic, clearing experiments, and draining expired work.", flush=True)
+        request(args.api + "/api/reset", method="POST")
+        request(args.api + "/api/mitigations", {
+            "retryBudgets": True, "singleLayerRetries": True,
+            "propagateDeadlines": True, "shedExpired": True, "boundedQueues": True,
+        })
+        service_names = {s["name"] for s in state["services"]}
+        wait_for_idle(request, args.api, service_names, args.wait)
+        # Test checkout under the reference policy, after recovery has finished.
+        request(args.api + "/api/reset", method="POST")
+        wait_for_idle(request, args.api, service_names, args.wait)
+
         account = gql('mutation { createAccount(account: {name: "Smoke check"}) { id } }')["createAccount"]
         product = gql('mutation { createProduct(product: {name: "Smoke lamp", description: "CI", price: 12.34}) { id } }')["createProduct"]
         query = """mutation($order: OrderInput!) {
@@ -74,10 +128,14 @@ def main():
         state = request(args.api + "/api/mitigations", {"retryBudgets": True})
         if not state["mitigations"]["retryBudgets"]:
             raise RuntimeError("retry budget policy did not apply")
-        request(args.api + "/api/reset", {})
-        print("Smoke check passed: UI, five agents, checkout, idempotency, order history, live policy.")
+        request(args.api + "/api/reset", method="POST")
+        passed = True
     finally:
-        request(args.api + "/api/load", before, "PUT")
+        if passed:
+            request(args.api + "/api/load", before, "PUT")
+        else:
+            print("Smoke check failed; traffic has not been resumed. Inspect the error before restarting load.", file=sys.stderr)
+    print("Smoke check passed: UI, five agents, checkout, idempotency, order history, live policy.")
 
 
 if __name__ == "__main__":

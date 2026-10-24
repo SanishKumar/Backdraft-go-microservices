@@ -64,6 +64,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Smoke readiness regression tests
+        run: python3 -B -m unittest discover -s scripts -p "test_*.py"
       - name: Prepare Elasticsearch host
         run: sudo sysctl -w vm.max_map_count=262144
       - run: docker compose config --quiet
