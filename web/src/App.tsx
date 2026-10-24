@@ -40,12 +40,12 @@ function LiveView() {
             ) : <a href="#observe" className="btn primary">Explore your system <span aria-hidden>↗</span></a>}
             <button className="btn ghost" onClick={() => setView('predict')}>Explore a what-if <span aria-hidden>↗</span></button>
           </div>
-          <div className="hero-note">{state?.load ? 'Real requests. Real failures. A safe place to learn.' : 'Your live traffic, connected end to end.'}</div>
+          <div className="hero-note">{state?.load ? 'Run a fault experiment over real gRPC calls.' : 'Inspect traffic across your connected services.'}</div>
         </div>
         <div className="hero-art">
           <Constellation paused={paused} />
           <div className="constellation-caption">
-            <span><span className="dot live" /> A system of consequences</span>
+            <span><span className="dot live" /> System health in motion</span>
             <button className="btn ghost small" aria-label={paused ? 'Resume constellation animation' : 'Pause constellation animation'} onClick={() => setPaused(!paused)}>{paused ? 'Play motion' : 'Pause motion'} <span aria-hidden>{paused ? '▷' : 'Ⅱ'}</span></button>
           </div>
         </div>
@@ -70,7 +70,7 @@ function LiveView() {
       <FindingsRail />
       <footer className="footer">
         <div className="brand"><Mark /><span className="brand-name">backdraft</span></div>
-        <span>Understand the failure. Change the outcome.</span>
+        <span>A local workbench for service resilience.</span>
         <button className="btn ghost" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>Back to top ↑</button>
       </footer>
     </main>

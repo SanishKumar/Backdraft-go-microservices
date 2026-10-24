@@ -1,13 +1,19 @@
 # Backdraft
 
-Retry storms can keep a service overloaded after the original slowdown ends.
-Backdraft helps investigate that failure mode: inspect retries across a gRPC
-call graph, reproduce an incident, and compare policy changes before applying
-them.
+Backdraft is a local workbench for testing how gRPC services fail and recover.
+Inject a short slowdown, inspect the retries and queues it leaves behind,
+then compare or apply a policy change.
 
 [![CI](https://github.com/SanishKumar/Backdraft-go-microservices/actions/workflows/ci.yml/badge.svg)](https://github.com/SanishKumar/Backdraft-go-microservices/actions/workflows/ci.yml)
 
-![Backdraft live workspace](docs/images/backdraft.png)
+![Backdraft demo: a Catalog slowdown causes a retry storm, then a policy change restores service](docs/images/backdraft-demo.gif)
+
+A 30-second tour recorded in the local lab, with pauses shortened. Catalog
+slows for eight seconds; retries keep the system overloaded after the fault
+clears. A retry budget restores service. The final views compare policy
+predictions and map the failure boundary across loads and fault durations.
+
+[View the static screenshot](docs/images/backdraft.png).
 
 ## Quick start
 
@@ -138,6 +144,7 @@ and the live stream to port 7070.
 go test -short ./...          # unit and integration tests
 go test ./internal/lab        # live failure and recovery experiment
 go vet ./...
+python -B -m unittest discover -s scripts -p "test_*.py"
 cd web
 npm run typecheck
 npm run build
@@ -154,9 +161,8 @@ Compose smoke check against real databases.
 
 ## Scope
 
-Backdraft is a local resilience workbench. The observe → simulate → apply
-workflow is implemented; a hosted or production management service is outside
-the current scope.
+The control plane is intended for local experiments and service integration.
+It is not a hosted management service.
 
 - Unary RPCs are instrumented. Streaming RPCs pass through unchanged.
 - Traces, configuration overrides, and calibration are held in memory.
