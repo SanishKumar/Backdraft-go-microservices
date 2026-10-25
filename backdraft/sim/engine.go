@@ -56,6 +56,9 @@ type Result struct {
 	// grew past any plausible recovery.
 	Events    int  `json:"events"`
 	Truncated bool `json:"truncated"`
+	// PeakQueue counts all queued jobs after each enqueue, including peaks
+	// between chart samples. It excludes requests already occupying workers.
+	PeakQueue int `json:"peakQueue"`
 	// StoppedAt is when a StopWhenStuck run ended, 0 if it ran to the end.
 	StoppedAt float64 `json:"stoppedAt,omitempty"`
 }
@@ -299,6 +302,7 @@ type engine struct {
 	seq     uint64
 	q       heap
 	rng     *rand.Rand
+	ingress *rand.Rand // arrival times and operation mix must not depend on retries
 	servers map[string]*server
 	ordered []*server
 	entry   *server
@@ -331,6 +335,7 @@ func RunContext(ctx context.Context, m *Model, sc Scenario) (*Result, error) {
 		m:       m,
 		sc:      sc,
 		rng:     rand.New(rand.NewPCG(sc.Seed, sc.Seed^0x9e3779b97f4a7c15)),
+		ingress: rand.New(rand.NewPCG(sc.Seed^0xd1b54a32d192ed03, sc.Seed)),
 		servers: map[string]*server{},
 		n:       n,
 		q:       make(heap, 0, 4096),
@@ -584,12 +589,12 @@ func (e *engine) scheduleArrival() {
 		e.at(event{t: e.now + 0.05, kind: evNextArrival})
 		return
 	}
-	e.at(event{t: e.now + e.rng.ExpFloat64()/rate, kind: evArrival})
+	e.at(event{t: e.now + e.ingress.ExpFloat64()/rate, kind: evArrival})
 }
 
 func (e *engine) arrival() {
 	e.res.Offered[e.bucket()]++
-	u := e.rng.Float64() * e.opCum[len(e.opCum)-1]
+	u := e.ingress.Float64() * e.opCum[len(e.opCum)-1]
 	i := sort.SearchFloat64s(e.opCum, u)
 	e.startCall(e.entry, e.opEdges[i], e.m.Ops[i].Name, math.Inf(1), nil)
 }
@@ -634,6 +639,7 @@ func (e *engine) arrive(s *server, j *job) {
 	}
 	s.push(j)
 	e.pending++
+	e.res.PeakQueue = max(e.res.PeakQueue, e.pending)
 	if s.cfg.Server.ShedExpired && !math.IsInf(j.deadline, 1) {
 		// A deadline-aware server lets a waiter go the moment its caller
 		// does, as the agent's limiter does.

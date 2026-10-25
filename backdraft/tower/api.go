@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"net/http"
 	"os"
@@ -40,12 +41,19 @@ func (t *Tower) Handler() http.Handler {
 	mux.HandleFunc("GET /api/traces/{id}", t.handleTrace)
 
 	mux.HandleFunc("GET /api/model", t.handleModel)
+	mux.HandleFunc("POST /api/reviews/capture", t.handleCaptureReview)
+	mux.HandleFunc("POST /api/reviews/validate", t.handleValidateReview)
+	mux.HandleFunc("GET /api/reviews", t.handleReviewList)
+	mux.HandleFunc("POST /api/reviews", t.handleRunReview)
+	mux.HandleFunc("GET /api/reviews/{id}", t.handleReviewGet)
 	mux.HandleFunc("POST /api/sim/run", t.simulation(t.handleSimRun))
 	mux.HandleFunc("POST /api/sim/map", t.simulation(t.handleSimMap))
 	mux.HandleFunc("POST /api/sim/hysteresis", t.simulation(t.handleSimHysteresis))
 
 	if dir := t.opts.UIDir; dir != "" {
 		mux.Handle("/", spa(dir))
+	} else if t.opts.UIFS != nil {
+		mux.Handle("/", bundledSPA(t.opts.UIFS))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !upgrader.CheckOrigin(r) {
@@ -53,6 +61,45 @@ func (t *Tower) Handler() http.Handler {
 			return
 		}
 		mux.ServeHTTP(w, r)
+	})
+}
+
+func bundledSPA(files fs.FS) http.Handler {
+	server := http.FileServer(http.FS(files))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
+			path = "index.html"
+		}
+		if !fs.ValidPath(path) {
+			http.NotFound(w, r)
+			return
+		}
+		if _, err := fs.Stat(files, path); err != nil {
+			if strings.HasPrefix(path, "assets/") {
+				http.NotFound(w, r)
+				return
+			}
+			index, err := fs.ReadFile(files, "index.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Write(index)
+			return
+		}
+		if strings.HasPrefix(path, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		server.ServeHTTP(w, r)
 	})
 }
 

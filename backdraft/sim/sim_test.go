@@ -62,24 +62,54 @@ func TestDeterministic(t *testing.T) {
 	}
 }
 
+func TestPolicyChangesDoNotChangeOfferedWorkload(t *testing.T) {
+	sc := Brownout(250, "back", 100, 3, 3, 6, 42)
+	a := Run(chain(threeTries, patientUser, fourWorkers), sc)
+	b := Run(chain(oneTry, patientUser, fourWorkers), sc)
+	if a.Truncated || b.Truncated || !reflect.DeepEqual(a.Offered, b.Offered) {
+		t.Fatal("paired comparison did not preserve incoming traffic")
+	}
+	if reflect.DeepEqual(a.Goodput, b.Goodput) {
+		t.Fatal("test must exercise policies with different outcomes")
+	}
+}
+
 func TestLightLoadIsHealthyAndMatchesLittlesLaw(t *testing.T) {
 	m := chain(oneTry, patientUser, fourWorkers)
-	r := Run(m, Scenario{DurationS: 30, Load: []LoadPoint{{RPS: 100}}, Seed: 1})
-	if r.Verdict.Kind != "steady" || r.Verdict.FinalRatio < 0.99 {
-		t.Fatalf("verdict %+v", r.Verdict)
-	}
 	// Utilization law: busy workers = arrival rate x service time
 	// = 100/s x 10ms = 1.
 	var busy float64
 	var n int
-	for i, t := range r.T {
-		if t > 5 {
-			busy += r.Services["back"].Busy[i]
-			n++
+	// Gauge snapshots have sampling variance; use multiple independent
+	// ingress seeds instead of relying on a lucky single trajectory.
+	for seed := uint64(1); seed <= 10; seed++ {
+		r := Run(m, Scenario{DurationS: 30, Load: []LoadPoint{{RPS: 100}}, Seed: seed})
+		if r.Verdict.Kind != "steady" || r.Verdict.FinalRatio < 0.99 {
+			t.Fatalf("seed %d: %+v", seed, r.Verdict)
+		}
+		for i, at := range r.T {
+			if at > 5 {
+				busy += r.Services["back"].Busy[i]
+				n++
+			}
 		}
 	}
 	if mean := busy / float64(n); math.Abs(mean-1) > 0.15 {
 		t.Fatalf("mean busy workers = %.2f, want about 1", mean)
+	}
+}
+
+func TestFinalDipCannotBeReportedAsZeroSecondRecovery(t *testing.T) {
+	r := &Result{StepS: 1, T: make([]float64, 40), Offered: make([]float64, 40), Goodput: make([]float64, 40), Services: map[string]*ServiceSeries{}}
+	for i := range r.T {
+		r.T[i] = float64(i)
+		r.Offered[i] = 100
+		r.Goodput[i] = 100
+	}
+	r.Goodput[39] = 79
+	v := judge(r, Brownout(100, "back", 100, 8, 2, 30, 1), chain(oneTry, patientUser, fourWorkers))
+	if v.RecoveryS >= 0 {
+		t.Fatalf("last rolling window was below recovery threshold: %+v", v)
 	}
 }
 

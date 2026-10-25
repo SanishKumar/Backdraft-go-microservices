@@ -9,6 +9,7 @@ package lab
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/SanishKumar/go-microservices/account"
 	"github.com/SanishKumar/go-microservices/backdraft"
 	"github.com/SanishKumar/go-microservices/backdraft/pb"
+	"github.com/SanishKumar/go-microservices/backdraft/review"
 	"github.com/SanishKumar/go-microservices/backdraft/tower"
 	"github.com/SanishKumar/go-microservices/catalog"
 	"github.com/SanishKumar/go-microservices/graphql"
@@ -35,6 +37,9 @@ type Options struct {
 	GatewayAddr string
 	// UIDir is a built web UI; skipped if it does not exist.
 	UIDir string
+	UIFS  fs.FS
+	// DataDir persists reviews; empty keeps tests and ephemeral labs in memory.
+	DataDir string
 	// RPS is the load generator's initial rate.
 	RPS float64
 }
@@ -57,6 +62,10 @@ func listen(addr string) (net.Listener, error) {
 // Start boots every service and the control plane. Everything stops when
 // ctx ends.
 func Start(ctx context.Context, opts Options) (*Lab, error) {
+	reviews, err := review.Open(opts.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("review storage: %w", err)
+	}
 	if opts.UIDir != "" {
 		if _, err := os.Stat(filepath.Join(opts.UIDir, "index.html")); err != nil {
 			log.Printf("lab: no UI build at %s (run `npm run build` in web/, or use the Vite dev server)", opts.UIDir)
@@ -85,6 +94,8 @@ func Start(ctx context.Context, opts Options) (*Lab, error) {
 		Fallback:    reference.SimModel(reference.System()),
 		InitialRPS:  opts.RPS,
 		UIDir:       opts.UIDir,
+		UIFS:        opts.UIFS,
+		Reviews:     reviews,
 	})
 	towerGRPC := grpc.NewServer()
 	pb.RegisterControlPlaneServer(towerGRPC, t)

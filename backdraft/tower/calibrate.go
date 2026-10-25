@@ -178,9 +178,10 @@ func toShape(children []child) sim.Shape {
 
 // Calibration says how much of a model came from observation.
 type Calibration struct {
-	SelfSamples  map[string]int `json:"selfSamples"`
-	ShapeSamples map[string]int `json:"shapeSamples"`
-	OpsObserved  bool           `json:"opsObserved"`
+	SelfSamples   map[string]int            `json:"selfSamples"`
+	ShapeSamples  map[string]int            `json:"shapeSamples"`
+	MethodSamples map[string]map[string]int `json:"methodSamples"`
+	OpsObserved   bool                      `json:"opsObserved"`
 }
 
 // model builds a simulation model from observations, falling back to
@@ -188,7 +189,7 @@ type Calibration struct {
 func (c *calibrator) model(sys backdraft.SystemConfig, fallback *sim.Model) (*sim.Model, Calibration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	cal := Calibration{SelfSamples: map[string]int{}, ShapeSamples: map[string]int{}}
+	cal := Calibration{SelfSamples: map[string]int{}, ShapeSamples: map[string]int{}, MethodSamples: map[string]map[string]int{}}
 	m := &sim.Model{Entry: sys.Entry, Services: map[string]sim.ServiceModel{}}
 	for name, cfg := range sys.Services {
 		sm := sim.ServiceModel{Config: cfg.Clone(), MeanSelfMs: cfg.Server.WorkMs}
@@ -202,6 +203,7 @@ func (c *calibrator) model(sys backdraft.SystemConfig, fallback *sim.Model) (*si
 			cal.SelfSamples[name] = len(r.items)
 		}
 		if methods := c.shapes[name]; len(methods) > 0 {
+			cal.MethodSamples[name] = map[string]int{}
 			shapes := map[string][]sim.Shape{}
 			for method, samples := range sm.Shapes {
 				shapes[method] = samples
@@ -211,6 +213,7 @@ func (c *calibrator) model(sys backdraft.SystemConfig, fallback *sim.Model) (*si
 				if len(r.items) >= minSamples {
 					sm.Shapes[method] = append([]sim.Shape(nil), r.items...)
 					cal.ShapeSamples[name] += len(r.items)
+					cal.MethodSamples[name][method] = len(r.items)
 				}
 			}
 		}

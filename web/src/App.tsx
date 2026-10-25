@@ -11,6 +11,7 @@ import { Constellation } from './components/Constellation'
 import { SystemGraph } from './components/SystemGraph'
 import { PredictView } from './views/Predict'
 import { PolicyView } from './views/Policy'
+import { ReviewsView } from './views/Reviews'
 import { fmtRate } from './format'
 
 function LiveView() {
@@ -88,7 +89,7 @@ export function App() {
       <a href="#main" className="skip-link">Skip to workspace</a>
       <TopBar />
       {hasState && !connected && <p className="connection-notice" role="status">Connection lost. Showing the last received values while reconnecting.</p>}
-      {!hasState ? (
+      {view === 'reviews' ? <main id="main"><ReviewsView /></main> : !hasState ? (
         <main className="loading-state" id="main">
           <div className="eyebrow">Backdraft / Live connection</div>
           <h1>{connected ? 'Finding the signal.' : 'Waiting for your system.'}</h1>

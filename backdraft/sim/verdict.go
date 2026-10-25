@@ -131,7 +131,7 @@ func judge(r *Result, sc Scenario, m *Model) Verdict {
 		}
 	}
 	switch {
-	case v.FinalRatio >= threshold:
+	case v.FinalRatio >= threshold && lastBad+1 < len(r.T):
 		v.Kind = "recovered"
 		v.RecoveryS = 0
 		if lastBad >= 0 && lastBad+1 < len(r.T) {

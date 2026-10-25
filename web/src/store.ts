@@ -4,7 +4,7 @@ import type { ControlEvent, Report, State, Tick } from './types'
 // About two minutes of history at four ticks a second.
 const HISTORY = 480
 
-export type View = 'live' | 'predict' | 'policy'
+export type View = 'reviews' | 'live' | 'predict' | 'policy'
 
 interface Store {
   connected: boolean
@@ -28,7 +28,7 @@ export const useStore = create<Store>((set) => ({
   report: null,
   ticks: [],
   events: [],
-  view: 'live',
+  view: 'reviews',
   selected: null,
   tracesOpen: false,
   hoveredEdges: [],

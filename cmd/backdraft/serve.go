@@ -8,9 +8,11 @@ import (
 	"net"
 
 	"github.com/SanishKumar/go-microservices/backdraft/pb"
+	"github.com/SanishKumar/go-microservices/backdraft/review"
 	"github.com/SanishKumar/go-microservices/backdraft/tower"
 	"github.com/SanishKumar/go-microservices/internal/reference"
 	"github.com/SanishKumar/go-microservices/internal/serve"
+	webassets "github.com/SanishKumar/go-microservices/web"
 	"google.golang.org/grpc"
 )
 
@@ -28,6 +30,7 @@ func runServe(args []string, stderr io.Writer) int {
 	grpcAddr := fs.String("grpc", "127.0.0.1:7071", "address agents connect to")
 	httpAddr := fs.String("http", "127.0.0.1:7070", "address of the API and UI")
 	ui := fs.String("ui", "", "directory of the built web UI to serve")
+	data := fs.String("data", ".backdraft/reviews", "directory for saved reviews (empty keeps them in memory)")
 	entry := fs.String("entry", "", "service receiving external traffic (default gateway, or users with --load-target)")
 	target := fs.String("load-target", "", "GraphQL endpoint to drive with the load generator (empty disables it)")
 	rps := fs.Float64("rps", 0, "initial load, requests per second")
@@ -59,12 +62,19 @@ func runServe(args []string, stderr io.Writer) int {
 
 	ctx, stop := serve.Context()
 	defer stop()
+	reviews, err := review.Open(*data)
+	if err != nil {
+		fmt.Fprintln(stderr, "review storage:", err)
+		return 1
+	}
 	opts := tower.Options{
 		Entry:       *entry,
 		LoadTarget:  *target,
 		EntryPolicy: reference.UsersPolicy(),
 		InitialRPS:  *rps,
 		UIDir:       *ui,
+		UIFS:        webassets.Files(),
+		Reviews:     reviews,
 	}
 	if *target != "" {
 		opts.Fallback = reference.SimModel(reference.System())

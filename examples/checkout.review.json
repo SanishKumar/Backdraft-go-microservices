@@ -1,0 +1,506 @@
+{
+  "version": 1,
+  "engine": "paired-ingress-v1",
+  "name": "Checkout retry policy",
+  "model": {
+    "entry": "users",
+    "services": {
+      "account": {
+        "config": {
+          "server": {
+            "workers": 16,
+            "queueLimit": 0,
+            "shedExpired": false,
+            "workMs": 3
+          },
+          "methods": {
+            "GetAccount": {
+              "idempotent": true
+            },
+            "GetAccounts": {
+              "idempotent": true
+            },
+            "PostAccount": {
+              "idempotent": false
+            }
+          },
+          "fault": {
+            "latencyMs": 0,
+            "errorRate": 0
+          }
+        },
+        "meanSelfMs": 3
+      },
+      "catalog": {
+        "config": {
+          "server": {
+            "workers": 8,
+            "queueLimit": 0,
+            "shedExpired": false,
+            "workMs": 12
+          },
+          "methods": {
+            "GetProduct": {
+              "idempotent": true
+            },
+            "GetProducts": {
+              "idempotent": true
+            },
+            "PostProduct": {
+              "idempotent": false
+            }
+          },
+          "fault": {
+            "latencyMs": 0,
+            "errorRate": 0
+          }
+        },
+        "meanSelfMs": 12
+      },
+      "gateway": {
+        "config": {
+          "server": {
+            "workers": 0,
+            "queueLimit": 0,
+            "shedExpired": false,
+            "workMs": 0.5
+          },
+          "clients": {
+            "account": {
+              "timeoutMs": 600,
+              "maxAttempts": 3,
+              "backoffMs": 25,
+              "backoffMaxMs": 200,
+              "retryOn": [
+                "UNAVAILABLE",
+                "DEADLINE_EXCEEDED"
+              ],
+              "propagateDeadline": true
+            },
+            "catalog": {
+              "timeoutMs": 600,
+              "maxAttempts": 3,
+              "backoffMs": 25,
+              "backoffMaxMs": 200,
+              "retryOn": [
+                "UNAVAILABLE",
+                "DEADLINE_EXCEEDED"
+              ],
+              "propagateDeadline": true
+            },
+            "order": {
+              "timeoutMs": 1500,
+              "maxAttempts": 3,
+              "backoffMs": 25,
+              "backoffMaxMs": 200,
+              "retryOn": [
+                "UNAVAILABLE",
+                "DEADLINE_EXCEEDED"
+              ],
+              "propagateDeadline": true
+            }
+          },
+          "methods": {
+            "AccountPage": {
+              "idempotent": true
+            },
+            "Browse": {
+              "idempotent": true
+            },
+            "Checkout": {
+              "idempotent": false,
+              "dedupes": true
+            }
+          },
+          "fault": {
+            "latencyMs": 0,
+            "errorRate": 0
+          }
+        },
+        "meanSelfMs": 0.5,
+        "shapes": {
+          "AccountPage": [
+            [
+              [
+                {
+                  "peer": "account",
+                  "method": "GetAccount"
+                }
+              ],
+              [
+                {
+                  "peer": "order",
+                  "method": "GetOrdersForAccount"
+                }
+              ]
+            ]
+          ],
+          "Browse": [
+            [
+              [
+                {
+                  "peer": "catalog",
+                  "method": "GetProducts"
+                }
+              ]
+            ]
+          ],
+          "Checkout": [
+            [
+              [
+                {
+                  "peer": "order",
+                  "method": "PostOrder"
+                }
+              ]
+            ]
+          ]
+        }
+      },
+      "order": {
+        "config": {
+          "server": {
+            "workers": 16,
+            "queueLimit": 0,
+            "shedExpired": false,
+            "workMs": 4
+          },
+          "clients": {
+            "account": {
+              "timeoutMs": 600,
+              "maxAttempts": 3,
+              "backoffMs": 25,
+              "backoffMaxMs": 200,
+              "retryOn": [
+                "UNAVAILABLE",
+                "DEADLINE_EXCEEDED"
+              ],
+              "propagateDeadline": false
+            },
+            "catalog": {
+              "timeoutMs": 600,
+              "maxAttempts": 3,
+              "backoffMs": 25,
+              "backoffMaxMs": 200,
+              "retryOn": [
+                "UNAVAILABLE",
+                "DEADLINE_EXCEEDED"
+              ],
+              "propagateDeadline": false
+            }
+          },
+          "methods": {
+            "GetOrdersForAccount": {
+              "idempotent": true
+            },
+            "PostOrder": {
+              "idempotent": false,
+              "dedupes": true
+            }
+          },
+          "fault": {
+            "latencyMs": 0,
+            "errorRate": 0
+          }
+        },
+        "meanSelfMs": 4,
+        "shapes": {
+          "PostOrder": [
+            [
+              [
+                {
+                  "peer": "account",
+                  "method": "GetAccount"
+                }
+              ],
+              [
+                {
+                  "peer": "catalog",
+                  "method": "GetProducts"
+                }
+              ]
+            ]
+          ]
+        }
+      },
+      "users": {
+        "config": {
+          "server": {
+            "workers": 0,
+            "queueLimit": 0,
+            "shedExpired": false
+          },
+          "clients": {
+            "gateway": {
+              "timeoutMs": 2000,
+              "maxAttempts": 2,
+              "backoffMs": 250,
+              "backoffMaxMs": 250,
+              "retryOn": [
+                "UNAVAILABLE",
+                "DEADLINE_EXCEEDED",
+                "RESOURCE_EXHAUSTED",
+                "INTERNAL"
+              ],
+              "propagateDeadline": true
+            }
+          },
+          "fault": {
+            "latencyMs": 0,
+            "errorRate": 0
+          }
+        },
+        "meanSelfMs": 0
+      }
+    },
+    "ops": [
+      {
+        "name": "Browse",
+        "service": "gateway",
+        "weight": 0.5
+      },
+      {
+        "name": "AccountPage",
+        "service": "gateway",
+        "weight": 0.3
+      },
+      {
+        "name": "Checkout",
+        "service": "gateway",
+        "weight": 0.2
+      }
+    ]
+  },
+  "candidate": {
+    "entry": "users",
+    "services": {
+      "account": {
+        "server": {
+          "workers": 16,
+          "queueLimit": 64,
+          "shedExpired": true,
+          "workMs": 3
+        },
+        "methods": {
+          "GetAccount": {
+            "idempotent": true
+          },
+          "GetAccounts": {
+            "idempotent": true
+          },
+          "PostAccount": {
+            "idempotent": false
+          }
+        },
+        "fault": {
+          "latencyMs": 0,
+          "errorRate": 0
+        }
+      },
+      "catalog": {
+        "server": {
+          "workers": 8,
+          "queueLimit": 32,
+          "shedExpired": true,
+          "workMs": 12
+        },
+        "methods": {
+          "GetProduct": {
+            "idempotent": true
+          },
+          "GetProducts": {
+            "idempotent": true
+          },
+          "PostProduct": {
+            "idempotent": false
+          }
+        },
+        "fault": {
+          "latencyMs": 0,
+          "errorRate": 0
+        }
+      },
+      "gateway": {
+        "server": {
+          "workers": 0,
+          "queueLimit": 0,
+          "shedExpired": false,
+          "workMs": 0.5
+        },
+        "clients": {
+          "account": {
+            "timeoutMs": 600,
+            "maxAttempts": 3,
+            "backoffMs": 25,
+            "backoffMaxMs": 200,
+            "retryOn": [
+              "UNAVAILABLE",
+              "DEADLINE_EXCEEDED"
+            ],
+            "propagateDeadline": true,
+            "budget": {
+              "ratio": 0.1,
+              "minPerSec": 1
+            },
+            "noRetry": [
+              "PostAccount"
+            ]
+          },
+          "catalog": {
+            "timeoutMs": 600,
+            "maxAttempts": 3,
+            "backoffMs": 25,
+            "backoffMaxMs": 200,
+            "retryOn": [
+              "UNAVAILABLE",
+              "DEADLINE_EXCEEDED"
+            ],
+            "propagateDeadline": true,
+            "budget": {
+              "ratio": 0.1,
+              "minPerSec": 1
+            },
+            "noRetry": [
+              "PostProduct"
+            ]
+          },
+          "order": {
+            "timeoutMs": 1500,
+            "maxAttempts": 3,
+            "backoffMs": 25,
+            "backoffMaxMs": 200,
+            "retryOn": [
+              "UNAVAILABLE",
+              "DEADLINE_EXCEEDED"
+            ],
+            "propagateDeadline": true,
+            "budget": {
+              "ratio": 0.1,
+              "minPerSec": 1
+            }
+          }
+        },
+        "methods": {
+          "AccountPage": {
+            "idempotent": true
+          },
+          "Browse": {
+            "idempotent": true
+          },
+          "Checkout": {
+            "idempotent": false,
+            "dedupes": true
+          }
+        },
+        "fault": {
+          "latencyMs": 0,
+          "errorRate": 0
+        }
+      },
+      "order": {
+        "server": {
+          "workers": 16,
+          "queueLimit": 64,
+          "shedExpired": true,
+          "workMs": 4
+        },
+        "clients": {
+          "account": {
+            "timeoutMs": 600,
+            "maxAttempts": 1,
+            "backoffMs": 25,
+            "backoffMaxMs": 200,
+            "retryOn": [
+              "UNAVAILABLE",
+              "DEADLINE_EXCEEDED"
+            ],
+            "propagateDeadline": true
+          },
+          "catalog": {
+            "timeoutMs": 600,
+            "maxAttempts": 1,
+            "backoffMs": 25,
+            "backoffMaxMs": 200,
+            "retryOn": [
+              "UNAVAILABLE",
+              "DEADLINE_EXCEEDED"
+            ],
+            "propagateDeadline": true
+          }
+        },
+        "methods": {
+          "GetOrdersForAccount": {
+            "idempotent": true
+          },
+          "PostOrder": {
+            "idempotent": false,
+            "dedupes": true
+          }
+        },
+        "fault": {
+          "latencyMs": 0,
+          "errorRate": 0
+        }
+      },
+      "users": {
+        "server": {
+          "workers": 0,
+          "queueLimit": 0,
+          "shedExpired": false
+        },
+        "clients": {
+          "gateway": {
+            "timeoutMs": 2000,
+            "maxAttempts": 2,
+            "backoffMs": 250,
+            "backoffMaxMs": 250,
+            "retryOn": [
+              "UNAVAILABLE",
+              "DEADLINE_EXCEEDED",
+              "RESOURCE_EXHAUSTED",
+              "INTERNAL"
+            ],
+            "propagateDeadline": true
+          }
+        },
+        "fault": {
+          "latencyMs": 0,
+          "errorRate": 0
+        }
+      }
+    }
+  },
+  "contract": {
+    "services": [
+      "catalog"
+    ],
+    "loads": [
+      120,
+      200
+    ],
+    "durations": [
+      2,
+      8
+    ],
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "latencyMs": 300,
+    "errorRate": 0,
+    "warmS": 8,
+    "observeS": 30,
+    "minSuccessRatio": 0.95,
+    "maxRecoveryS": 10,
+    "maxQueue": 1000
+  },
+  "evidence": {
+    "source": "declared",
+    "capturedAt": "0001-01-01T00:00:00Z",
+    "selfSamples": null,
+    "shapeSamples": null,
+    "methodSamples": null,
+    "opsObserved": false
+  }
+}

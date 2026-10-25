@@ -16,12 +16,13 @@ func main() {
 	httpAddr := flag.String("http", "127.0.0.1:7070", "control plane API and UI")
 	gatewayAddr := flag.String("gateway", "127.0.0.1:8080", "GraphQL gateway")
 	ui := flag.String("ui", "web/dist", "built web UI to serve (skipped if missing)")
+	data := flag.String("data", ".backdraft/reviews", "saved review directory (empty keeps reviews in memory)")
 	rps := flag.Float64("rps", 150, "initial load, requests per second")
 	flag.Parse()
 
 	ctx, stop := serve.Context()
 	defer stop()
-	l, err := lab.Start(ctx, lab.Options{HTTPAddr: *httpAddr, GatewayAddr: *gatewayAddr, UIDir: *ui, RPS: *rps})
+	l, err := lab.Start(ctx, lab.Options{HTTPAddr: *httpAddr, GatewayAddr: *gatewayAddr, UIDir: *ui, DataDir: *data, RPS: *rps})
 	if err != nil {
 		log.Fatal(err)
 	}

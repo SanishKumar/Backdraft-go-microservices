@@ -17,12 +17,14 @@ COPY graphql graphql
 COPY backdraft backdraft
 COPY internal internal
 COPY cmd cmd
+COPY web/*.go web/
 RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/backdraft ./cmd/backdraft
 
 FROM alpine:3.21
 RUN adduser -D -H app
+RUN mkdir -p /data/reviews && chown -R app:app /data
 USER app
 COPY --from=build /out/backdraft /usr/bin/backdraft
 COPY --from=web /web/dist /srv/ui
 EXPOSE 7070 7071
-ENTRYPOINT ["backdraft", "serve", "--ui", "/srv/ui"]
+ENTRYPOINT ["backdraft", "serve", "--ui", "/srv/ui", "--data", "/data/reviews"]

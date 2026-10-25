@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"reflect"
 	"sort"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/SanishKumar/go-microservices/backdraft"
 	"github.com/SanishKumar/go-microservices/backdraft/analysis"
 	"github.com/SanishKumar/go-microservices/backdraft/pb"
+	"github.com/SanishKumar/go-microservices/backdraft/review"
 	"github.com/SanishKumar/go-microservices/backdraft/sim"
 )
 
@@ -40,6 +42,10 @@ type Options struct {
 	InitialRPS float64
 	// UIDir, when set, is served at /.
 	UIDir string
+	// UIFS is used by distribution builds. UIDir, when set, takes precedence.
+	UIFS fs.FS
+	// Reviews retains immutable review bundles and results. Nil uses memory.
+	Reviews *review.Store
 }
 
 // Tower is the control plane.
@@ -95,6 +101,9 @@ func (s *session) push(cfg []byte) {
 
 // New creates a control plane. Call Run to start its loops.
 func New(opts Options) *Tower {
+	if opts.Reviews == nil {
+		opts.Reviews, _ = review.Open("")
+	}
 	if opts.Entry == "" {
 		opts.Entry = "users"
 	}

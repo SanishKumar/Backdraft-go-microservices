@@ -2,6 +2,7 @@ import { useId } from 'react'
 import { useStore, type View } from '../store'
 
 const TABS: { id: View; label: string }[] = [
+  { id: 'reviews', label: 'Reviews' },
   { id: 'live', label: 'Live system' },
   { id: 'predict', label: 'Predict' },
   { id: 'policy', label: 'Policy' },
@@ -25,7 +26,7 @@ export function TopBar() {
   const setTracesOpen = useStore((s) => s.setTracesOpen)
   return (
     <header className="topbar">
-      <button className="brand" onClick={() => { setView('live'); window.scrollTo({ top: 0, behavior: 'smooth' }) }} aria-label="Backdraft home">
+      <button className="brand" onClick={() => { setView('reviews'); window.scrollTo({ top: 0, behavior: 'smooth' }) }} aria-label="Backdraft home">
         <Mark /><span className="brand-name">backdraft</span>
       </button>
       <nav className="tabs" aria-label="Workspace views">

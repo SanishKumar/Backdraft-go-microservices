@@ -14,6 +14,8 @@ services:
     command: ["--grpc", ":7071", "--http", ":7070", "--load-target", "http://graphql:8080/graphql", "--rps", "120"]
     ports:
       - "127.0.0.1:7070:7070"
+    volumes:
+      - backdraft_reviews:/data/reviews
     restart: on-failure
 
   account:
@@ -85,3 +87,6 @@ services:
     environment:
       ES_JAVA_OPTS: -Xms512m -Xmx512m
       discovery.type: single-node
+
+volumes:
+  backdraft_reviews:

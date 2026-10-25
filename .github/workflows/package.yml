@@ -1,0 +1,48 @@
+name: Portable builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm --prefix web ci --no-audit --no-fund
+      - run: npm --prefix web run build
+      - name: Test embedded UI and review engine
+        run: go test -tags webui ./backdraft/review ./backdraft/tower ./cmd/backdraft ./web
+      - name: Build distributions
+        env:
+          CGO_ENABLED: '0'
+          BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do
+            export GOOS=${target%/*} GOARCH=${target#*/}
+            name=backdraft-$GOOS-$GOARCH
+            if [ "$GOOS" = windows ]; then name=$name.exe; fi
+            go build -mod=vendor -tags webui -trimpath -ldflags="-s -w -X main.version=$BUILD_VERSION" -o dist/$name ./cmd/backdraft
+          done
+          cd dist
+          sha256sum backdraft-* > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backdraft-portable
+          path: dist/
+          retention-days: 30

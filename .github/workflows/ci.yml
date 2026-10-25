@@ -39,6 +39,8 @@ jobs:
         run: go test -v -count=1 -timeout=3m ./internal/lab
       - name: Enforce the hardened example policy
         run: go run ./cmd/backdraft check examples/hardened.policy.json
+      - name: Review the frozen checkout envelope offline
+        run: go run ./cmd/backdraft review --out /tmp/checkout-report.json examples/checkout.review.json
 
   web:
     name: UI build
@@ -57,6 +59,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run build
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Build executable with embedded UI
+        working-directory: .
+        run: go build -tags webui -o /tmp/backdraft ./cmd/backdraft
 
   compose:
     name: Docker Compose with real databases
